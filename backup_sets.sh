@@ -10,8 +10,11 @@
 # CONFIGURATION FILE LOCATION
 #------------------------------------------------------------------------------
 
-# Path to YAML configuration file
-CONFIG_FILE="/etc/backup_config.yaml"
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Path to YAML configuration file (in same directory as script)
+CONFIG_FILE="${SCRIPT_DIR}/backup_config.yaml"
 
 # Flag files (these remain hardcoded for safety)
 RUNNING_FLAG="/mnt/.backup_running"
