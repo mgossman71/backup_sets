@@ -21,6 +21,9 @@ RUNNING_FLAG="/mnt/.backup_running"
 FAIL_FLAG="/mnt/.backup_failed"
 STOP_FLAG="/mnt/.backup_stop"
 
+# YQ type detection (set by check_dependencies)
+YQ_TYPE=""
+
 #------------------------------------------------------------------------------
 # FUNCTIONS
 #------------------------------------------------------------------------------
@@ -52,8 +55,8 @@ yq_read() {
     local file="$2"
     
     if [ "$YQ_TYPE" = "python" ]; then
-        # Python yq uses jq syntax: yq -r '.key' file.yaml
-        yq -r "$query" "$file"
+        # Python yq syntax: yq -r 'query' < file.yaml
+        yq -r "$query" < "$file"
     else
         # Go yq uses: yq eval '.key' file.yaml
         yq eval "$query" "$file"
