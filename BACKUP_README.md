@@ -17,13 +17,18 @@ sudo chmod +x /usr/local/bin/yq
 
 ### 2. Install the script and configuration
 ```bash
-# Copy the script
-sudo cp backup_sets.sh /usr/local/bin/
-sudo chmod +x /usr/local/bin/backup_sets.sh
+# Create installation directory (or use your preferred location)
+sudo mkdir -p /usr/local/bin/backup_scripts
 
-# Copy the configuration file
-sudo cp backup_config.yaml /etc/
-sudo chmod 644 /etc/backup_config.yaml
+# Copy both files to the same directory
+sudo cp backup_sets.sh /usr/local/bin/backup_scripts/
+sudo cp backup_config.yaml /usr/local/bin/backup_scripts/
+
+# Make script executable
+sudo chmod +x /usr/local/bin/backup_scripts/backup_sets.sh
+
+# Optional: Create a symlink for easier access
+sudo ln -s /usr/local/bin/backup_scripts/backup_sets.sh /usr/local/bin/backup_sets.sh
 ```
 
 ### 3. Create the log file
@@ -34,10 +39,11 @@ sudo chown gozz:gozz /var/log/backup_sets.log
 
 ## Configuration
 
-All settings are in `/etc/backup_config.yaml`. Edit this file to change backup behavior:
+The configuration file `backup_config.yaml` must be in the same directory as `backup_sets.sh`. Edit this file to change backup behavior:
 
 ```bash
-sudo nano /etc/backup_config.yaml
+# If installed to /usr/local/bin/backup_scripts/
+sudo nano /usr/local/bin/backup_scripts/backup_config.yaml
 ```
 
 ### Configuration Options
@@ -91,7 +97,11 @@ The script will create a folder with the same name as the source folder inside t
 
 ### Manual Execution
 ```bash
-sudo /usr/local/bin/backup_sets.sh
+# If you created the symlink:
+sudo backup_sets.sh
+
+# Or run directly from installation directory:
+sudo /usr/local/bin/backup_scripts/backup_sets.sh
 ```
 
 You'll see real-time progress in the terminal and it will also be logged.
@@ -103,14 +113,19 @@ Run daily at 2 AM:
 sudo crontab -e
 ```
 
-Add this line:
+Add this line (adjust path to where you installed the script):
+```
+0 2 * * * /usr/local/bin/backup_scripts/backup_sets.sh
+```
+
+Or if you created the symlink:
 ```
 0 2 * * * /usr/local/bin/backup_sets.sh
 ```
 
 Run every Sunday at 3 AM:
 ```
-0 3 * * 0 /usr/local/bin/backup_sets.sh
+0 3 * * 0 /usr/local/bin/backup_scripts/backup_sets.sh
 ```
 
 ## Control Flags
@@ -171,10 +186,11 @@ sudo grep "$(date '+%Y-%m-%d')" /var/log/backup_sets.log
 
 ## Adding New Backups
 
-When you create new datasets or want to backup additional locations, simply edit the YAML config:
+When you create new datasets or want to backup additional locations, simply edit the YAML config file in the same directory as the script:
 
 ```bash
-sudo nano /etc/backup_config.yaml
+# Edit the config file (adjust path to your installation location)
+sudo nano /usr/local/bin/backup_scripts/backup_config.yaml
 ```
 
 Add new entries to the `backups` section:
@@ -204,7 +220,7 @@ No need to restart anything - the script reads the config file each time it runs
 ## Tuning Performance
 
 ### Bandwidth Issues?
-Edit `/etc/backup_config.yaml` and reduce max_concurrent:
+Edit the config file (in same directory as script) and reduce max_concurrent:
 ```yaml
 max_concurrent: 1
 ```
@@ -235,17 +251,21 @@ rsync_opts: "-av --stats --progress"
 3. Check if stopped: `ls /mnt/.backup_stop`
 4. Check for previous failure: `ls /mnt/.backup_failed`
 5. Check logs: `sudo tail -100 /var/log/backup_sets.log`
-6. Verify config file exists: `ls -la /etc/backup_config.yaml`
+6. Verify config file exists in same directory as script
+7. Check config file path in logs (script shows where it's looking)
 
 ### Configuration errors
 ```bash
+# Navigate to your installation directory
+cd /usr/local/bin/backup_scripts
+
 # Validate YAML syntax
-yq eval '.' /etc/backup_config.yaml
+yq eval '.' backup_config.yaml
 
 # Check specific values
-yq eval '.max_concurrent' /etc/backup_config.yaml
-yq eval '.backups | length' /etc/backup_config.yaml
-yq eval '.backups[0].source' /etc/backup_config.yaml
+yq eval '.max_concurrent' backup_config.yaml
+yq eval '.backups | length' backup_config.yaml
+yq eval '.backups[0].source' backup_config.yaml
 ```
 
 ### Backup failed
@@ -269,7 +289,7 @@ yq eval '.backups[0].source' /etc/backup_config.yaml
 [2025-02-28 02:00:01] ==========================================
 [2025-02-28 02:00:01] Backup script started
 [2025-02-28 02:00:01] ==========================================
-[2025-02-28 02:00:01] Loaded configuration from: /etc/backup_config.yaml
+[2025-02-28 02:00:01] Loaded configuration from: /usr/local/bin/backup_scripts/backup_config.yaml
 [2025-02-28 02:00:01] MAX_CONCURRENT: 2
 [2025-02-28 02:00:01] LOG_FILE: /var/log/backup_sets.log
 [2025-02-28 02:00:01] RSYNC_OPTS: -av --stats
@@ -289,7 +309,7 @@ yq eval '.backups[0].source' /etc/backup_config.yaml
 
 ## Configuration File Example
 
-Complete example of `/etc/backup_config.yaml`:
+Complete example of `backup_config.yaml` (keep in same directory as script):
 
 ```yaml
 # Backup Configuration File
