@@ -18,13 +18,13 @@ rsync_opts: "-av --stats"
 backups:
 
   - source: /mnt/SharedVol/Movies/Set1
-    destination: /mnt/usb_chassis/disk2/Set1
+    destination: /mnt/usb_chassis/disk2
   
   - source: /mnt/SharedVol/Movies/Set2
-    destination: /mnt/usb_chassis/disk3/Set2
+    destination: /mnt/usb_chassis/disk3
   
   - source: /mnt/SharedVol/Movies/Set3
-    destination: /mnt/usb_chassis/disk1/Set3
+    destination: /mnt/usb_chassis/disk1
   
 # To add new backups from different sources, add more entries:
 #  - source: /mnt/OtherVol/Photos
