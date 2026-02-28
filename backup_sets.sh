@@ -21,46 +21,16 @@ RUNNING_FLAG="/mnt/.backup_running"
 FAIL_FLAG="/mnt/.backup_failed"
 STOP_FLAG="/mnt/.backup_stop"
 
-# YQ type detection (set by check_dependencies)
-YQ_TYPE=""
-
 #------------------------------------------------------------------------------
 # FUNCTIONS
 #------------------------------------------------------------------------------
 
-# Check if yq is installed
-check_dependencies() {
-    if ! command -v yq &> /dev/null; then
-        echo "ERROR: 'yq' is not installed. Please install it first:"
-        echo "  Option 1 (Python-based yq):"
-        echo "    pip install yq"
-        echo "  Option 2 (Go-based yq):"
-        echo "    sudo snap install yq"
-        echo "    Or: sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
-        echo "    sudo chmod +x /usr/local/bin/yq"
-        exit 1
-    fi
-    
-    # Detect which yq version is installed
-    if yq --version 2>&1 | grep -q "kislyuk\|python\|jq"; then
-        YQ_TYPE="python"
-    else
-        YQ_TYPE="go"
-    fi
-}
-
-# Read YAML value based on yq type
+# Read YAML value - works with kislyuk/yq (Python-based)
 yq_read() {
     local query="$1"
     local file="$2"
     
-    if [ "$YQ_TYPE" = "python" ]; then
-        # Python yq syntax: yq -r 'query' < file.yaml
-        yq -r "$query" < "$file"
-    else
-        # Go yq uses: yq eval '.key' file.yaml
-        yq eval "$query" "$file"
-    fi
+    cat "$file" | yq -r "$query" 2>/dev/null
 }
 
 # Load configuration from YAML
@@ -70,7 +40,7 @@ load_config() {
         exit 1
     fi
     
-    # Read configuration values using the appropriate yq syntax
+    # Read configuration values
     MAX_CONCURRENT=$(yq_read '.max_concurrent' "$CONFIG_FILE")
     LOG_FILE=$(yq_read '.log_file' "$CONFIG_FILE")
     RSYNC_OPTS=$(yq_read '.rsync_opts' "$CONFIG_FILE")
@@ -87,7 +57,6 @@ load_config() {
     fi
     
     log "Loaded configuration from: $CONFIG_FILE"
-    log "YQ Type: $YQ_TYPE"
     log "MAX_CONCURRENT: $MAX_CONCURRENT"
     log "LOG_FILE: $LOG_FILE"
     log "RSYNC_OPTS: $RSYNC_OPTS"
@@ -187,7 +156,7 @@ process_backups() {
     # Get the number of backup entries
     local backup_count=$(yq_read '.backups | length' "$CONFIG_FILE")
     
-    if [ "$backup_count" -eq 0 ] || [ "$backup_count" = "null" ]; then
+    if [ "$backup_count" -eq 0 ] || [ "$backup_count" = "null" ] || [ -z "$backup_count" ]; then
         log "WARNING: No backups defined in configuration file"
         return 0
     fi
@@ -254,8 +223,13 @@ process_backups() {
 # MAIN SCRIPT
 #------------------------------------------------------------------------------
 
-# Check dependencies first (before logging, since LOG_FILE comes from config)
-check_dependencies
+# Check if yq is installed
+if ! command -v yq &> /dev/null; then
+    echo "ERROR: 'yq' is not installed. Please install it:"
+    echo "  pip install yq"
+    echo "  or: sudo apt install yq"
+    exit 1
+fi
 
 # Load configuration
 load_config
