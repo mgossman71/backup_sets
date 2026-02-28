@@ -25,15 +25,12 @@ STOP_FLAG="/mnt/.backup_stop"
 # FUNCTIONS
 #------------------------------------------------------------------------------
 
-# Check if yq is installed
-check_dependencies() {
-    if ! command -v yq &> /dev/null; then
-        echo "ERROR: 'yq' is not installed. Please install it first:"
-        echo "  Ubuntu/Debian: sudo snap install yq"
-        echo "  Or: sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
-        echo "  sudo chmod +x /usr/local/bin/yq"
-        exit 1
-    fi
+# Read YAML value - works with kislyuk/yq (Python-based)
+yq_read() {
+    local query="$1"
+    local file="$2"
+    
+    cat "$file" | yq -r "$query" 2>/dev/null
 }
 
 # Load configuration from YAML
@@ -44,9 +41,9 @@ load_config() {
     fi
     
     # Read configuration values
-    MAX_CONCURRENT=$(yq eval '.max_concurrent' "$CONFIG_FILE")
-    LOG_FILE=$(yq eval '.log_file' "$CONFIG_FILE")
-    RSYNC_OPTS=$(yq eval '.rsync_opts' "$CONFIG_FILE")
+    MAX_CONCURRENT=$(yq_read '.max_concurrent' "$CONFIG_FILE")
+    LOG_FILE=$(yq_read '.log_file' "$CONFIG_FILE")
+    RSYNC_OPTS=$(yq_read '.rsync_opts' "$CONFIG_FILE")
     
     # Validate required values
     if [ -z "$MAX_CONCURRENT" ] || [ "$MAX_CONCURRENT" = "null" ]; then
@@ -157,9 +154,9 @@ process_backups() {
     log "Starting backup process with MAX_CONCURRENT=$MAX_CONCURRENT"
     
     # Get the number of backup entries
-    local backup_count=$(yq eval '.backups | length' "$CONFIG_FILE")
+    local backup_count=$(yq_read '.backups | length' "$CONFIG_FILE")
     
-    if [ "$backup_count" -eq 0 ] || [ "$backup_count" = "null" ]; then
+    if [ "$backup_count" -eq 0 ] || [ "$backup_count" = "null" ] || [ -z "$backup_count" ]; then
         log "WARNING: No backups defined in configuration file"
         return 0
     fi
@@ -168,8 +165,8 @@ process_backups() {
     
     # Process each backup entry
     for (( i=0; i<$backup_count; i++ )); do
-        local source_path=$(yq eval ".backups[$i].source" "$CONFIG_FILE")
-        local destination=$(yq eval ".backups[$i].destination" "$CONFIG_FILE")
+        local source_path=$(yq_read ".backups[$i].source" "$CONFIG_FILE")
+        local destination=$(yq_read ".backups[$i].destination" "$CONFIG_FILE")
         
         # Validate entries
         if [ -z "$source_path" ] || [ "$source_path" = "null" ]; then
@@ -226,8 +223,13 @@ process_backups() {
 # MAIN SCRIPT
 #------------------------------------------------------------------------------
 
-# Check dependencies first (before logging, since LOG_FILE comes from config)
-check_dependencies
+# Check if yq is installed
+if ! command -v yq &> /dev/null; then
+    echo "ERROR: 'yq' is not installed. Please install it:"
+    echo "  pip install yq"
+    echo "  or: sudo apt install yq"
+    exit 1
+fi
 
 # Load configuration
 load_config
