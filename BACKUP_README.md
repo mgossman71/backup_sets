@@ -6,14 +6,27 @@ This script performs incremental backups of multiple dataset folders to differen
 ## Installation
 
 ### 1. Install yq (YAML parser)
+
+The script supports both common versions of yq:
+
+**Option 1: Python-based yq (kislyuk/yq)**
 ```bash
-# Option 1: Using snap (recommended)
+pip install yq
+# or
+sudo apt install yq
+```
+
+**Option 2: Go-based yq (mikefarah/yq)**
+```bash
+# Using snap
 sudo snap install yq
 
-# Option 2: Direct download
+# Or direct download
 sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
 sudo chmod +x /usr/local/bin/yq
 ```
+
+The script will automatically detect which version you have and use the appropriate syntax.
 
 ### 2. Install the script and configuration
 ```bash
@@ -260,9 +273,18 @@ rsync_opts: "-av --stats --progress"
 cd /usr/local/bin/backup_scripts
 
 # Validate YAML syntax
+# For Python yq:
+yq '.' backup_config.yaml
+
+# For Go yq:
 yq eval '.' backup_config.yaml
 
-# Check specific values
+# Check specific values (Python yq syntax):
+yq -r '.max_concurrent' backup_config.yaml
+yq -r '.backups | length' backup_config.yaml
+yq -r '.backups[0].source' backup_config.yaml
+
+# Check specific values (Go yq syntax):
 yq eval '.max_concurrent' backup_config.yaml
 yq eval '.backups | length' backup_config.yaml
 yq eval '.backups[0].source' backup_config.yaml

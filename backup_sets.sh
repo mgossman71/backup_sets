@@ -29,10 +29,34 @@ STOP_FLAG="/mnt/.backup_stop"
 check_dependencies() {
     if ! command -v yq &> /dev/null; then
         echo "ERROR: 'yq' is not installed. Please install it first:"
-        echo "  Ubuntu/Debian: sudo snap install yq"
-        echo "  Or: sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
-        echo "  sudo chmod +x /usr/local/bin/yq"
+        echo "  Option 1 (Python-based yq):"
+        echo "    pip install yq"
+        echo "  Option 2 (Go-based yq):"
+        echo "    sudo snap install yq"
+        echo "    Or: sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
+        echo "    sudo chmod +x /usr/local/bin/yq"
         exit 1
+    fi
+    
+    # Detect which yq version is installed
+    if yq --version 2>&1 | grep -q "kislyuk\|python\|jq"; then
+        YQ_TYPE="python"
+    else
+        YQ_TYPE="go"
+    fi
+}
+
+# Read YAML value based on yq type
+yq_read() {
+    local query="$1"
+    local file="$2"
+    
+    if [ "$YQ_TYPE" = "python" ]; then
+        # Python yq uses jq syntax: yq -r '.key' file.yaml
+        yq -r "$query" "$file"
+    else
+        # Go yq uses: yq eval '.key' file.yaml
+        yq eval "$query" "$file"
     fi
 }
 
@@ -43,10 +67,10 @@ load_config() {
         exit 1
     fi
     
-    # Read configuration values
-    MAX_CONCURRENT=$(yq eval '.max_concurrent' "$CONFIG_FILE")
-    LOG_FILE=$(yq eval '.log_file' "$CONFIG_FILE")
-    RSYNC_OPTS=$(yq eval '.rsync_opts' "$CONFIG_FILE")
+    # Read configuration values using the appropriate yq syntax
+    MAX_CONCURRENT=$(yq_read '.max_concurrent' "$CONFIG_FILE")
+    LOG_FILE=$(yq_read '.log_file' "$CONFIG_FILE")
+    RSYNC_OPTS=$(yq_read '.rsync_opts' "$CONFIG_FILE")
     
     # Validate required values
     if [ -z "$MAX_CONCURRENT" ] || [ "$MAX_CONCURRENT" = "null" ]; then
@@ -60,6 +84,7 @@ load_config() {
     fi
     
     log "Loaded configuration from: $CONFIG_FILE"
+    log "YQ Type: $YQ_TYPE"
     log "MAX_CONCURRENT: $MAX_CONCURRENT"
     log "LOG_FILE: $LOG_FILE"
     log "RSYNC_OPTS: $RSYNC_OPTS"
@@ -157,7 +182,7 @@ process_backups() {
     log "Starting backup process with MAX_CONCURRENT=$MAX_CONCURRENT"
     
     # Get the number of backup entries
-    local backup_count=$(yq eval '.backups | length' "$CONFIG_FILE")
+    local backup_count=$(yq_read '.backups | length' "$CONFIG_FILE")
     
     if [ "$backup_count" -eq 0 ] || [ "$backup_count" = "null" ]; then
         log "WARNING: No backups defined in configuration file"
@@ -168,8 +193,8 @@ process_backups() {
     
     # Process each backup entry
     for (( i=0; i<$backup_count; i++ )); do
-        local source_path=$(yq eval ".backups[$i].source" "$CONFIG_FILE")
-        local destination=$(yq eval ".backups[$i].destination" "$CONFIG_FILE")
+        local source_path=$(yq_read ".backups[$i].source" "$CONFIG_FILE")
+        local destination=$(yq_read ".backups[$i].destination" "$CONFIG_FILE")
         
         # Validate entries
         if [ -z "$source_path" ] || [ "$source_path" = "null" ]; then
