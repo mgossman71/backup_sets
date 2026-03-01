@@ -10,7 +10,7 @@ log_file: /var/log/backup_sets.log
 
 # Rsync options (space-separated)
 # -a: archive mode, -v: verbose, --stats: show statistics
-rsync_opts: "-av --stats"
+rsync_opts: "-av --progress --stats"
 
 # Backup mappings
 # Each entry maps a source directory to a destination directory
