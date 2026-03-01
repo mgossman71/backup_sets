@@ -12,26 +12,17 @@ rsync_opts: "-av --progress --stats"
 # Each entry maps a source directory to a destination directory
 # The folder name from the source will be created in the destination
 backups:
-  - source: /mnt/SharedVol/Movies/default
-    destination: /mnt/usb_chassis/disk1
-  
-  - source: /mnt/SharedVol/Movies/Set0
-    destination: /mnt/usb_chassis/disk1
-  
+  - source: /mnt/SharedVol/Data
+    destination: /mnt/usb_chassis/disk2
+    
   - source: /mnt/SharedVol/Movies/Set1
     destination: /mnt/usb_chassis/disk2
   
   - source: /mnt/SharedVol/Movies/Set2
-    destination: /mnt/usb_chassis/disk2
+    destination: /mnt/usb_chassis/disk3
   
   - source: /mnt/SharedVol/Movies/Set3
-    destination: /mnt/usb_chassis/disk3
-  
-  - source: /mnt/SharedVol/Movies/Set4
-    destination: /mnt/usb_chassis/disk3
-  
-  - source: /mnt/SharedVol/Movies/Set5
-    destination: /mnt/usb_chassis/disk4
+    destination: /mnt/usb_chassis/disk1
 
 # To add new backups from different sources, add more entries:
 #  - source: /mnt/OtherVol/Photos
