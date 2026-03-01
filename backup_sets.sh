@@ -115,6 +115,9 @@ backup_folder() {
     local source_path="$1"
     local dest_base="$2"
     
+    # Close stdin to prevent hanging in cron
+    exec 0</dev/null
+    
     # Extract just the folder name from the source path for destination
     local folder_name=$(basename "$source_path")
     local dest_path="${dest_base}/${folder_name}"
@@ -137,20 +140,31 @@ backup_folder() {
         mkdir -p "$dest_path" || error_exit "Failed to create destination: $dest_path"
     fi
     
-    # Run rsync with progress and detailed output
+    # Run rsync with output to log file
     log "Running: rsync $RSYNC_OPTS $source_path/ $dest_path/"
     
-    # Rsync with output to both log and to capture stats
-    rsync $RSYNC_OPTS "$source_path/" "$dest_path/" 2>&1 | while IFS= read -r line; do
-        echo "[$folder_name] $line" >> "$LOG_FILE"
-    done
+    # Create a temporary file for rsync output
+    local temp_log="/tmp/rsync_${folder_name}_$$.log"
     
-    local rsync_exit=${PIPESTATUS[0]}
-    
-    if [ $rsync_exit -eq 0 ]; then
+    # Run rsync and capture output
+    if rsync $RSYNC_OPTS "$source_path/" "$dest_path/" > "$temp_log" 2>&1; then
+        # Append rsync output to main log with folder prefix
+        while IFS= read -r line; do
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$folder_name] $line" >> "$LOG_FILE"
+        done < "$temp_log"
+        rm -f "$temp_log"
+        
         log "Successfully completed backup: $folder_name"
         return 0
     else
+        local rsync_exit=$?
+        
+        # Append error output to log
+        while IFS= read -r line; do
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$folder_name] $line" >> "$LOG_FILE"
+        done < "$temp_log"
+        rm -f "$temp_log"
+        
         error_exit "Rsync failed for: $source_path (exit code: $rsync_exit)"
     fi
 }
@@ -190,19 +204,20 @@ process_backups() {
         while [ $active_jobs -ge $MAX_CONCURRENT ]; do
             # Check if any background jobs have completed
             for j in "${!job_pids[@]}"; do
-                if ! kill -0 "${job_pids[$j]}" 2>/dev/null; then
-                    # Job has finished
-                    wait "${job_pids[$j]}"
+                if [ -n "${job_pids[$j]}" ] && ! kill -0 "${job_pids[$j]}" 2>/dev/null; then
+                    # Job has finished - reap it
+                    wait "${job_pids[$j]}" 2>/dev/null
                     local exit_code=$?
                     if [ $exit_code -ne 0 ]; then
                         error_exit "Background backup job failed with exit code: $exit_code"
                     fi
+                    log "Background job PID ${job_pids[$j]} completed"
                     unset 'job_pids[$j]'
                     ((active_jobs--))
                 fi
             done
             job_pids=("${job_pids[@]}") # Reindex array
-            sleep 2
+            sleep 1
         done
         
         # Start backup in background
@@ -217,11 +232,23 @@ process_backups() {
     
     # Wait for all remaining jobs to complete
     log "Waiting for all backup jobs to complete..."
+    log "Active PIDs: ${job_pids[*]}"
+    
+    # Use jobs -p to get actual running background jobs
     for pid in "${job_pids[@]}"; do
-        wait $pid
-        local exit_code=$?
-        if [ $exit_code -ne 0 ]; then
-            error_exit "Background backup job (PID: $pid) failed with exit code: $exit_code"
+        if [ -n "$pid" ]; then
+            # Check if process still exists before waiting
+            if kill -0 "$pid" 2>/dev/null; then
+                log "Waiting for PID $pid to complete..."
+                wait $pid 2>/dev/null
+                local exit_code=$?
+                if [ $exit_code -ne 0 ]; then
+                    log "Warning: PID $pid exited with code $exit_code (may have already completed)"
+                fi
+                log "PID $pid completed"
+            else
+                log "PID $pid already completed"
+            fi
         fi
     done
     
