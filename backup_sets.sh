@@ -72,13 +72,15 @@ log() {
 error_exit() {
     log "ERROR: $1"
     touch "$FAIL_FLAG"
+    CLEANUP_ALLOWED=true
     cleanup
     exit 1
 }
 
 # Cleanup function
 cleanup() {
-    if [ -f "$RUNNING_FLAG" ]; then
+    # Only remove running flag if we're truly done (not called by trap during background jobs)
+    if [ -f "$RUNNING_FLAG" ] && [ "$CLEANUP_ALLOWED" = "true" ]; then
         rm -f "$RUNNING_FLAG"
         log "Removed running flag"
     fi
@@ -234,8 +236,8 @@ fi
 # Load configuration
 load_config
 
-# Trap to ensure cleanup on exit
-trap cleanup EXIT INT TERM
+# Flag to control cleanup
+CLEANUP_ALLOWED=false
 
 # Start logging
 log "=========================================="
@@ -251,6 +253,9 @@ check_running
 # Set running flag
 set_running_flag
 
+# Set trap to cleanup on interrupt (Ctrl+C) or termination
+trap 'CLEANUP_ALLOWED=true; cleanup; exit 1' INT TERM
+
 # Remove any old fail flags
 if [ -f "$FAIL_FLAG" ]; then
     rm -f "$FAIL_FLAG"
@@ -259,6 +264,10 @@ fi
 
 # Process all backups
 process_backups
+
+# Allow cleanup now that all jobs are done
+CLEANUP_ALLOWED=true
+cleanup
 
 # Success
 log "=========================================="
