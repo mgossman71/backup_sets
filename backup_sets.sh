@@ -137,14 +137,21 @@ backup_folder() {
         mkdir -p "$dest_path" || error_exit "Failed to create destination: $dest_path"
     fi
     
-    # Run rsync
+    # Run rsync with progress and detailed output
     log "Running: rsync $RSYNC_OPTS $source_path/ $dest_path/"
     
-    if rsync $RSYNC_OPTS "$source_path/" "$dest_path/" >> "$LOG_FILE" 2>&1; then
+    # Rsync with output to both log and to capture stats
+    rsync $RSYNC_OPTS "$source_path/" "$dest_path/" 2>&1 | while IFS= read -r line; do
+        echo "[$folder_name] $line" >> "$LOG_FILE"
+    done
+    
+    local rsync_exit=${PIPESTATUS[0]}
+    
+    if [ $rsync_exit -eq 0 ]; then
         log "Successfully completed backup: $folder_name"
         return 0
     else
-        error_exit "Rsync failed for: $source_path"
+        error_exit "Rsync failed for: $source_path (exit code: $rsync_exit)"
     fi
 }
 
