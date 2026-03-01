@@ -4,6 +4,7 @@
 # Backup Script for Multiple Dataset Sets
 # Uses rsync with archive mode for incremental backups
 # Configuration is loaded from backup_config.yaml
+# Runs backups sequentially (one at a time)
 ################################################################################
 
 #------------------------------------------------------------------------------
@@ -16,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Path to YAML configuration file (in same directory as script)
 CONFIG_FILE="${SCRIPT_DIR}/backup_config.yaml"
 
-# Flag files (these remain hardcoded for safety)
+# Flag files
 RUNNING_FLAG="/mnt/.backup_running"
 FAIL_FLAG="/mnt/.backup_failed"
 STOP_FLAG="/mnt/.backup_stop"
@@ -29,7 +30,6 @@ STOP_FLAG="/mnt/.backup_stop"
 yq_read() {
     local query="$1"
     local file="$2"
-    
     cat "$file" | yq -r "$query" 2>/dev/null
 }
 
@@ -41,23 +41,16 @@ load_config() {
     fi
     
     # Read configuration values
-    MAX_CONCURRENT=$(yq_read '.max_concurrent' "$CONFIG_FILE")
     LOG_FILE=$(yq_read '.log_file' "$CONFIG_FILE")
     RSYNC_OPTS=$(yq_read '.rsync_opts' "$CONFIG_FILE")
     
     # Validate required values
-    if [ -z "$MAX_CONCURRENT" ] || [ "$MAX_CONCURRENT" = "null" ]; then
-        echo "ERROR: max_concurrent not defined in $CONFIG_FILE"
-        exit 1
-    fi
-    
     if [ -z "$LOG_FILE" ] || [ "$LOG_FILE" = "null" ]; then
         echo "ERROR: log_file not defined in $CONFIG_FILE"
         exit 1
     fi
     
     log "Loaded configuration from: $CONFIG_FILE"
-    log "MAX_CONCURRENT: $MAX_CONCURRENT"
     log "LOG_FILE: $LOG_FILE"
     log "RSYNC_OPTS: $RSYNC_OPTS"
 }
@@ -72,15 +65,13 @@ log() {
 error_exit() {
     log "ERROR: $1"
     touch "$FAIL_FLAG"
-    CLEANUP_ALLOWED=true
     cleanup
     exit 1
 }
 
 # Cleanup function
 cleanup() {
-    # Only remove running flag if we're truly done (not called by trap during background jobs)
-    if [ -f "$RUNNING_FLAG" ] && [ "$CLEANUP_ALLOWED" = "true" ]; then
+    if [ -f "$RUNNING_FLAG" ]; then
         rm -f "$RUNNING_FLAG"
         log "Removed running flag"
     fi
@@ -115,14 +106,15 @@ backup_folder() {
     local source_path="$1"
     local dest_base="$2"
     
-    # Close stdin to prevent hanging in cron
-    exec 0</dev/null
-    
     # Extract just the folder name from the source path for destination
     local folder_name=$(basename "$source_path")
     local dest_path="${dest_base}/${folder_name}"
     
-    log "Starting backup: $source_path -> $dest_path"
+    log "========================================"
+    log "Starting backup: $folder_name"
+    log "Source: $source_path"
+    log "Destination: $dest_path"
+    log "========================================"
     
     # Check if source exists
     if [ ! -d "$source_path" ]; then
@@ -140,41 +132,20 @@ backup_folder() {
         mkdir -p "$dest_path" || error_exit "Failed to create destination: $dest_path"
     fi
     
-    # Run rsync with output to log file
+    # Run rsync
     log "Running: rsync $RSYNC_OPTS $source_path/ $dest_path/"
     
-    # Create a temporary file for rsync output
-    local temp_log="/tmp/rsync_${folder_name}_$$.log"
-    
-    # Run rsync and capture output
-    if rsync $RSYNC_OPTS "$source_path/" "$dest_path/" > "$temp_log" 2>&1; then
-        # Append rsync output to main log with folder prefix
-        while IFS= read -r line; do
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$folder_name] $line" >> "$LOG_FILE"
-        done < "$temp_log"
-        rm -f "$temp_log"
-        
+    if rsync $RSYNC_OPTS "$source_path/" "$dest_path/" >> "$LOG_FILE" 2>&1; then
         log "Successfully completed backup: $folder_name"
         return 0
     else
-        local rsync_exit=$?
-        
-        # Append error output to log
-        while IFS= read -r line; do
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$folder_name] $line" >> "$LOG_FILE"
-        done < "$temp_log"
-        rm -f "$temp_log"
-        
-        error_exit "Rsync failed for: $source_path (exit code: $rsync_exit)"
+        error_exit "Rsync failed for: $source_path"
     fi
 }
 
-# Process backups with concurrency control
+# Process all backups sequentially
 process_backups() {
-    local active_jobs=0
-    local job_pids=()
-    
-    log "Starting backup process with MAX_CONCURRENT=$MAX_CONCURRENT"
+    log "Starting backup process (sequential mode)"
     
     # Get the number of backup entries
     local backup_count=$(yq_read '.backups | length' "$CONFIG_FILE")
@@ -186,7 +157,7 @@ process_backups() {
     
     log "Found $backup_count backup(s) to process"
     
-    # Process each backup entry
+    # Process each backup entry sequentially
     for (( i=0; i<$backup_count; i++ )); do
         local source_path=$(yq_read ".backups[$i].source" "$CONFIG_FILE")
         local destination=$(yq_read ".backups[$i].destination" "$CONFIG_FILE")
@@ -200,56 +171,8 @@ process_backups() {
             error_exit "Invalid destination in backup entry $i"
         fi
         
-        # Wait if we've reached max concurrent jobs
-        while [ $active_jobs -ge $MAX_CONCURRENT ]; do
-            # Check if any background jobs have completed
-            for j in "${!job_pids[@]}"; do
-                if [ -n "${job_pids[$j]}" ] && ! kill -0 "${job_pids[$j]}" 2>/dev/null; then
-                    # Job has finished - reap it
-                    wait "${job_pids[$j]}" 2>/dev/null
-                    local exit_code=$?
-                    if [ $exit_code -ne 0 ]; then
-                        error_exit "Background backup job failed with exit code: $exit_code"
-                    fi
-                    log "Background job PID ${job_pids[$j]} completed"
-                    unset 'job_pids[$j]'
-                    ((active_jobs--))
-                fi
-            done
-            job_pids=("${job_pids[@]}") # Reindex array
-            sleep 1
-        done
-        
-        # Start backup in background
-        backup_folder "$source_path" "$destination" &
-        local pid=$!
-        job_pids+=($pid)
-        ((active_jobs++))
-        
-        local folder_name=$(basename "$source_path")
-        log "Started background job for $folder_name (PID: $pid, Active jobs: $active_jobs)"
-    done
-    
-    # Wait for all remaining jobs to complete
-    log "Waiting for all backup jobs to complete..."
-    log "Active PIDs: ${job_pids[*]}"
-    
-    # Use jobs -p to get actual running background jobs
-    for pid in "${job_pids[@]}"; do
-        if [ -n "$pid" ]; then
-            # Check if process still exists before waiting
-            if kill -0 "$pid" 2>/dev/null; then
-                log "Waiting for PID $pid to complete..."
-                wait $pid 2>/dev/null
-                local exit_code=$?
-                if [ $exit_code -ne 0 ]; then
-                    log "Warning: PID $pid exited with code $exit_code (may have already completed)"
-                fi
-                log "PID $pid completed"
-            else
-                log "PID $pid already completed"
-            fi
-        fi
+        # Run backup (blocking - waits for completion)
+        backup_folder "$source_path" "$destination"
     done
     
     log "All backup jobs completed successfully"
@@ -270,8 +193,8 @@ fi
 # Load configuration
 load_config
 
-# Flag to control cleanup
-CLEANUP_ALLOWED=false
+# Set trap to cleanup on interrupt
+trap 'cleanup; exit 1' INT TERM
 
 # Start logging
 log "=========================================="
@@ -287,9 +210,6 @@ check_running
 # Set running flag
 set_running_flag
 
-# Set trap to cleanup on interrupt (Ctrl+C) or termination
-trap 'CLEANUP_ALLOWED=true; cleanup; exit 1' INT TERM
-
 # Remove any old fail flags
 if [ -f "$FAIL_FLAG" ]; then
     rm -f "$FAIL_FLAG"
@@ -299,8 +219,7 @@ fi
 # Process all backups
 process_backups
 
-# Allow cleanup now that all jobs are done
-CLEANUP_ALLOWED=true
+# Cleanup and exit
 cleanup
 
 # Success
