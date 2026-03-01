@@ -126,20 +126,22 @@ Run daily at 2 AM:
 sudo crontab -e
 ```
 
-Add this line (adjust path to where you installed the script):
+Add this line (with proper output redirection for cron):
 ```
-0 2 * * * /usr/local/bin/backup_scripts/backup_sets.sh
+0 2 * * * /opt/backup_sets/backup_sets.sh >> /var/log/backup_sets_cron.log 2>&1
 ```
 
 Or if you created the symlink:
 ```
-0 2 * * * /usr/local/bin/backup_sets.sh
+0 2 * * * /usr/local/bin/backup_sets.sh >> /var/log/backup_sets_cron.log 2>&1
 ```
 
 Run every Sunday at 3 AM:
 ```
-0 3 * * 0 /usr/local/bin/backup_scripts/backup_sets.sh
+0 3 * * 0 /opt/backup_sets/backup_sets.sh >> /var/log/backup_sets_cron.log 2>&1
 ```
+
+**Note:** The `>> /var/log/backup_sets_cron.log 2>&1` part ensures cron doesn't hang waiting for output.
 
 ## Control Flags
 
