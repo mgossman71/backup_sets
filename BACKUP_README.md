@@ -34,14 +34,14 @@ The script will automatically detect which version you have and use the appropri
 sudo mkdir -p /usr/local/bin/backup_scripts
 
 # Copy both files to the same directory
-sudo cp backup_sets.sh /usr/local/bin/backup_scripts/
-sudo cp backup_config.yaml /usr/local/bin/backup_scripts/
+sudo cp backup.sh /usr/local/bin/backup_scripts/
+sudo cp config.yaml /usr/local/bin/backup_scripts/
 
 # Make script executable
-sudo chmod +x /usr/local/bin/backup_scripts/backup_sets.sh
+sudo chmod +x /usr/local/bin/backup_scripts/backup.sh
 
 # Optional: Create a symlink for easier access
-sudo ln -s /usr/local/bin/backup_scripts/backup_sets.sh /usr/local/bin/backup_sets.sh
+sudo ln -s /usr/local/bin/backup_scripts/backup.sh /usr/local/bin/backup.sh
 ```
 
 ### 3. Create the log file
@@ -52,22 +52,14 @@ sudo chown gozz:gozz /var/log/backup_sets.log
 
 ## Configuration
 
-The configuration file `backup_config.yaml` must be in the same directory as `backup_sets.sh`. Edit this file to change backup behavior:
+The configuration file `config.yaml` must be in the same directory as `backup.sh`. Edit this file to change backup behavior:
 
 ```bash
 # If installed to /usr/local/bin/backup_scripts/
-sudo nano /usr/local/bin/backup_scripts/backup_config.yaml
+sudo nano /usr/local/bin/backup_scripts/config.yaml
 ```
 
 ### Configuration Options
-
-#### max_concurrent
-Number of simultaneous backup jobs (default: 2)
-```yaml
-max_concurrent: 2
-```
-- Increase if you have more bandwidth
-- Decrease if backups are too slow
 
 #### log_file
 Location of the log file
@@ -86,16 +78,24 @@ rsync_opts: "-av --stats"
 - Add `--progress` for detailed progress
 - Add `--bwlimit=10000` to limit bandwidth to 10MB/s
 
+#### running_flag / fail_flag / stop_flag
+Paths to the flag files used to control and monitor the script. Customize these when running multiple instances simultaneously — each instance must use a unique set of flag file paths.
+```yaml
+running_flag: /mnt/.backup_running
+fail_flag: /mnt/.backup_failed
+stop_flag: /mnt/.backup_stop
+```
+
 #### backups
 List of source-to-destination mappings
 ```yaml
 backups:
   - source: /mnt/SharedVol/Movies/Set0
     destination: /mnt/usb_chassis/disk1
-  
+
   - source: /mnt/SharedVol/Movies/Set1
     destination: /mnt/usb_chassis/disk2
-  
+
   - source: /mnt/OtherVol/Photos
     destination: /mnt/usb_chassis/disk3
 ```
@@ -111,13 +111,35 @@ The script will create a folder with the same name as the source folder inside t
 ### Manual Execution
 ```bash
 # If you created the symlink:
-sudo backup_sets.sh
+sudo backup.sh
 
 # Or run directly from installation directory:
-sudo /usr/local/bin/backup_scripts/backup_sets.sh
+sudo /usr/local/bin/backup_scripts/backup.sh
 ```
 
 You'll see real-time progress in the terminal and it will also be logged.
+
+### Running Multiple Instances Simultaneously
+
+To run two separate backup jobs at the same time, create a separate config for each instance with unique flag file paths:
+
+**config_set_a.yaml:**
+```yaml
+running_flag: /mnt/.backup_a_running
+fail_flag: /mnt/.backup_a_failed
+stop_flag: /mnt/.backup_a_stop
+# ... other settings and backups ...
+```
+
+**config_set_b.yaml:**
+```yaml
+running_flag: /mnt/.backup_b_running
+fail_flag: /mnt/.backup_b_failed
+stop_flag: /mnt/.backup_b_stop
+# ... other settings and backups ...
+```
+
+The script reads `config.yaml` from its own directory by default. To use a different config file, either copy/symlink the script to a different directory alongside its own config, or modify `CONFIG_FILE` at the top of `backup.sh`.
 
 ### Automated Execution (Crontab)
 
@@ -128,22 +150,24 @@ sudo crontab -e
 
 Add this line (with proper output redirection for cron):
 ```
-0 2 * * * /opt/backup_sets/backup_sets.sh >> /var/log/backup_sets_cron.log 2>&1
+0 2 * * * /opt/backup_sets/backup.sh >> /var/log/backup_sets_cron.log 2>&1
 ```
 
 Or if you created the symlink:
 ```
-0 2 * * * /usr/local/bin/backup_sets.sh >> /var/log/backup_sets_cron.log 2>&1
+0 2 * * * /usr/local/bin/backup.sh >> /var/log/backup_sets_cron.log 2>&1
 ```
 
 Run every Sunday at 3 AM:
 ```
-0 3 * * 0 /opt/backup_sets/backup_sets.sh >> /var/log/backup_sets_cron.log 2>&1
+0 3 * * 0 /opt/backup_sets/backup.sh >> /var/log/backup_sets_cron.log 2>&1
 ```
 
 **Note:** The `>> /var/log/backup_sets_cron.log 2>&1` part ensures cron doesn't hang waiting for output.
 
 ## Control Flags
+
+Flag file paths are set in `config.yaml` (`running_flag`, `fail_flag`, `stop_flag`). The examples below use the default paths.
 
 ### Check if Backup is Running
 ```bash
@@ -205,7 +229,7 @@ When you create new datasets or want to backup additional locations, simply edit
 
 ```bash
 # Edit the config file (adjust path to your installation location)
-sudo nano /usr/local/bin/backup_scripts/backup_config.yaml
+sudo nano /usr/local/bin/backup_scripts/config.yaml
 ```
 
 Add new entries to the `backups` section:
@@ -213,19 +237,19 @@ Add new entries to the `backups` section:
 backups:
   - source: /mnt/SharedVol/Movies/default
     destination: /mnt/usb_chassis/disk1
-  
+
   - source: /mnt/SharedVol/Movies/Set0
     destination: /mnt/usb_chassis/disk1
-  
+
   # ... existing entries ...
-  
+
   # NEW ENTRIES
   - source: /mnt/SharedVol/Movies/Set6
     destination: /mnt/usb_chassis/disk4
-  
+
   - source: /mnt/OtherVol/Photos/Archive
     destination: /mnt/usb_chassis/disk5
-  
+
   - source: /home/data/Documents
     destination: /mnt/usb_chassis/disk6
 ```
@@ -233,18 +257,6 @@ backups:
 No need to restart anything - the script reads the config file each time it runs.
 
 ## Tuning Performance
-
-### Bandwidth Issues?
-Edit the config file (in same directory as script) and reduce max_concurrent:
-```yaml
-max_concurrent: 1
-```
-
-### Fast Drives?
-Increase max_concurrent:
-```yaml
-max_concurrent: 3
-```
 
 ### Limit Bandwidth
 Add bandwidth limit to rsync_opts (in KB/s):
@@ -276,20 +288,20 @@ cd /usr/local/bin/backup_scripts
 
 # Validate YAML syntax
 # For Python yq:
-yq '.' backup_config.yaml
+yq '.' config.yaml
 
 # For Go yq:
-yq eval '.' backup_config.yaml
+yq eval '.' config.yaml
 
 # Check specific values (Python yq syntax):
-yq -r '.max_concurrent' backup_config.yaml
-yq -r '.backups | length' backup_config.yaml
-yq -r '.backups[0].source' backup_config.yaml
+yq -r '.running_flag' config.yaml
+yq -r '.backups | length' config.yaml
+yq -r '.backups[0].source' config.yaml
 
 # Check specific values (Go yq syntax):
-yq eval '.max_concurrent' backup_config.yaml
-yq eval '.backups | length' backup_config.yaml
-yq eval '.backups[0].source' backup_config.yaml
+yq eval '.running_flag' config.yaml
+yq eval '.backups | length' config.yaml
+yq eval '.backups[0].source' config.yaml
 ```
 
 ### Backup failed
@@ -301,10 +313,9 @@ yq eval '.backups[0].source' backup_config.yaml
 6. Try running manually to see real-time errors
 
 ### Performance is slow
-1. Reduce `max_concurrent` to 1 in config
-2. Check USB connection (USB 2.0 vs 3.0 vs 3.1)
-3. Check if drives are healthy
-4. Add `--bwlimit` to `rsync_opts` in config
+1. Check USB connection (USB 2.0 vs 3.0 vs 3.1)
+2. Check if drives are healthy
+3. Add `--bwlimit` to `rsync_opts` in config
 
 ## Example Output
 
@@ -313,17 +324,16 @@ yq eval '.backups[0].source' backup_config.yaml
 [2025-02-28 02:00:01] ==========================================
 [2025-02-28 02:00:01] Backup script started
 [2025-02-28 02:00:01] ==========================================
-[2025-02-28 02:00:01] Loaded configuration from: /usr/local/bin/backup_scripts/backup_config.yaml
-[2025-02-28 02:00:01] MAX_CONCURRENT: 2
+[2025-02-28 02:00:01] Loaded configuration from: /usr/local/bin/backup_scripts/config.yaml
 [2025-02-28 02:00:01] LOG_FILE: /var/log/backup_sets.log
 [2025-02-28 02:00:01] RSYNC_OPTS: -av --stats
+[2025-02-28 02:00:01] RUNNING_FLAG: /mnt/.backup_running
+[2025-02-28 02:00:01] FAIL_FLAG: /mnt/.backup_failed
+[2025-02-28 02:00:01] STOP_FLAG: /mnt/.backup_stop
 [2025-02-28 02:00:01] Created running flag: /mnt/.backup_running
-[2025-02-28 02:00:01] Starting backup process with MAX_CONCURRENT=2
-[2025-02-28 02:00:01] Found 7 backup(s) to process
-[2025-02-28 02:00:01] Starting backup: /mnt/SharedVol/Movies/Set0 -> /mnt/usb_chassis/disk1/Set0
-[2025-02-28 02:00:01] Started background job for Set0 (PID: 12345, Active jobs: 1)
-[2025-02-28 02:00:01] Starting backup: /mnt/SharedVol/Movies/Set1 -> /mnt/usb_chassis/disk2/Set1
-[2025-02-28 02:00:01] Started background job for Set1 (PID: 12346, Active jobs: 2)
+[2025-02-28 02:00:01] Starting backup process (sequential mode)
+[2025-02-28 02:00:01] Found 4 backup(s) to process
+[2025-02-28 02:00:01] Starting backup: Data
 ...
 [2025-02-28 02:45:23] All backup jobs completed successfully
 [2025-02-28 02:45:23] ==========================================
@@ -333,13 +343,10 @@ yq eval '.backups[0].source' backup_config.yaml
 
 ## Configuration File Example
 
-Complete example of `backup_config.yaml` (keep in same directory as script):
+Complete example of `config.yaml` (keep in same directory as script):
 
 ```yaml
 # Backup Configuration File
-
-# Maximum concurrent backups (tune for your USB bandwidth)
-max_concurrent: 2
 
 # Log file location
 log_file: /var/log/backup_sets.log
@@ -347,33 +354,29 @@ log_file: /var/log/backup_sets.log
 # Rsync options
 rsync_opts: "-av --stats"
 
+# Flag files - customize per instance when running multiple simultaneously
+running_flag: /mnt/.backup_running
+fail_flag: /mnt/.backup_failed
+stop_flag: /mnt/.backup_stop
+
 # Backup mappings
 backups:
+  # Data volume
+  - source: /mnt/SharedVol/Data
+    destination: /mnt/usb_chassis/disk1
+
   # Movies on disk1
-  - source: /mnt/SharedVol/Movies/default
-    destination: /mnt/usb_chassis/disk1
-  
-  - source: /mnt/SharedVol/Movies/Set0
-    destination: /mnt/usb_chassis/disk1
-  
-  # Movies on disk2
   - source: /mnt/SharedVol/Movies/Set1
-    destination: /mnt/usb_chassis/disk2
-  
+    destination: /mnt/usb_chassis/disk1
+
+  # Movies on disk2
   - source: /mnt/SharedVol/Movies/Set2
     destination: /mnt/usb_chassis/disk2
-  
+
   # Movies on disk3
   - source: /mnt/SharedVol/Movies/Set3
     destination: /mnt/usb_chassis/disk3
-  
-  - source: /mnt/SharedVol/Movies/Set4
-    destination: /mnt/usb_chassis/disk3
-  
-  # Movies on disk4
-  - source: /mnt/SharedVol/Movies/Set5
-    destination: /mnt/usb_chassis/disk4
-  
+
   # Photos on disk5 (different source location!)
   - source: /mnt/OtherVol/Photos
     destination: /mnt/usb_chassis/disk5
@@ -381,9 +384,9 @@ backups:
 
 ## Safety Features
 
-1. **Single instance**: Script won't run if already running
-2. **Stop control**: Touch `/mnt/.backup_stop` to prevent execution
-3. **Failure detection**: Creates `/mnt/.backup_failed` on errors
+1. **Single instance**: Script won't run if already running (per flag file)
+2. **Stop control**: Touch the `stop_flag` path to prevent execution
+3. **Failure detection**: Creates `fail_flag` on errors
 4. **Comprehensive logging**: All actions logged with timestamps
 5. **Automatic cleanup**: Removes running flag on exit/error
 6. **Error propagation**: If any backup fails, all stop and flag is set
