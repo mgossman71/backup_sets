@@ -93,6 +93,38 @@ cleanup() {
     fi
 }
 
+# Verify required mount points are mounted
+verify_mount_points() {
+    log "Verifying mount points..."
+
+    # Get the number of mount points
+    local mount_count=$(yq_read '.required_mount_points | length' "$CONFIG_FILE")
+
+    # If no mount points defined, skip verification
+    if [ -z "$mount_count" ] || [ "$mount_count" = "null" ] || [ "$mount_count" -eq 0 ]; then
+        log "WARNING: No required_mount_points defined in configuration"
+        return 0
+    fi
+
+    # Check each mount point
+    for (( i=0; i<$mount_count; i++ )); do
+        local mount_point=$(yq_read ".required_mount_points[$i]" "$CONFIG_FILE")
+
+        if [ -z "$mount_point" ] || [ "$mount_point" = "null" ]; then
+            error_exit "Invalid mount_point in configuration at index $i"
+        fi
+
+        # Use mountpoint command to check if directory is a mount point
+        if ! mountpoint -q "$mount_point" 2>/dev/null; then
+            error_exit "Mount point not mounted: $mount_point - Backups cannot proceed"
+        fi
+
+        log "✓ Mount point verified: $mount_point"
+    done
+
+    log "All mount points verified successfully"
+}
+
 # Check if script should run
 check_stop_flag() {
     if [ -f "$STOP_FLAG" ]; then
@@ -166,7 +198,7 @@ process_backups() {
     # Get the number of backup entries
     local backup_count=$(yq_read '.backups | length' "$CONFIG_FILE")
 
-    if [ "$backup_count" -eq 0 ] || [ "$backup_count" = "null" ] || [ -z "$backup_count" ]; then
+    if [ -z "$backup_count" ] || [ "$backup_count" = "null" ] || [ "$backup_count" -eq 0 ]; then
         log "WARNING: No backups defined in configuration file"
         return 0
     fi
@@ -219,6 +251,9 @@ log "=========================================="
 
 # Check if stop flag exists
 check_stop_flag
+
+# Verify all required mount points are mounted
+verify_mount_points
 
 # Check if already running
 check_running
