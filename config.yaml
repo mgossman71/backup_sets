@@ -15,6 +15,12 @@ running_flag: /mnt/.backup_running
 fail_flag: /mnt/.backup_failed
 stop_flag: /mnt/.backup_stop
 
+# Required mount points to verify before starting backups
+# Script will check that these mount points are mounted
+# If any are unmounted, the script will exit without running backups
+required_mount_points:
+  - /mnt/usb_chassis
+
 # Backup mappings
 # Each entry maps a source directory to a destination directory
 # The folder name from the source will be created in the destination
