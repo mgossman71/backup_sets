@@ -19,7 +19,12 @@ stop_flag: /mnt/.backup_stop
 # Script will check that these mount points are mounted
 # If any are unmounted, the script will exit without running backups
 required_mount_points:
-  - /mnt/usb_chassis
+  - /mnt/usb_chassis/disk1
+  - /mnt/usb_chassis/disk2
+  - /mnt/usb_chassis/disk3
+  - /mnt/usb_chassis/disk4
+  - /mnt/usb_chassis/pool
+  - /mnt/usb_chassis/singleusb
 
 # Backup mappings
 # Each entry maps a source directory to a destination directory
