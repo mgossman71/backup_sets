@@ -77,6 +77,10 @@ function createFolderPicker() {
     $("#pk-root").checked = rootFiles;
     $("#pk-root-label").textContent = "Also copy loose files at the top level" + (data ? " (" + fmtNum(data.loose.count) + " files, " + fmtBytes(data.loose.size) + ")" : "");
 
+    // Rebuilding the list empties it for a moment, which makes the browser jump
+    // to the top - so remember where the user was and put them back there.
+    const scroller = back.querySelector(".modal .body");
+    const scrollTop = scroller ? scroller.scrollTop : 0;
     const tb = clear($("#pk-rows"));
     const q = $("#pk-filter").value.trim().toLowerCase();
     let list = srcFolders().filter(f => !q || f.name.toLowerCase().includes(q));
@@ -84,12 +88,20 @@ function createFolderPicker() {
     for (const f of list) {
       const cb = el("input", { type: "checkbox", "aria-label": "Back up " + f.name });
       cb.checked = checked.has(f.name);
-      cb.addEventListener("change", () => { cb.checked ? checked.add(f.name) : checked.delete(f.name); render(); });
-      tb.append(el("tr", { class: checked.has(f.name) ? "" : "off" },
+      const status = el("td", {}, statusCell(f));
+      const tr = el("tr", { class: checked.has(f.name) ? "" : "off" },
         el("td", {}, el("label", { class: "pk-name" }, cb, el("span", { class: "name", text: f.name }))),
         el("td", { class: "num", text: fmtBytes(f.src_size) }),
         el("td", { class: "num", text: f.on_dest ? fmtBytes(f.dest_size) : "—" }),
-        el("td", {}, statusCell(f))));
+        status);
+      // A single click updates only this row and the totals - the list itself stays put.
+      cb.addEventListener("change", () => {
+        cb.checked ? checked.add(f.name) : checked.delete(f.name);
+        tr.className = cb.checked ? "" : "off";
+        clear(status).append(statusCell(f));
+        renderFit();
+      });
+      tb.append(tr);
     }
     if (data && !list.length) tb.append(el("tr", {}, el("td", { colspan: 4, class: "muted", text: q ? "No folders match the filter." : "This source has no subfolders." })));
 
@@ -101,6 +113,7 @@ function createFolderPicker() {
       ob.append(el("h3", { text: "On the backup disk but no longer in the source (" + orph.length + ")" }),
         el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, el("tr", {}, el("th", { text: "Folder" }), el("th", { class: "num", text: "On backup disk" }), el("th", { text: "" }))), otb)));
     }
+    if (scroller) scroller.scrollTop = scrollTop;
     renderFit();
   }
 

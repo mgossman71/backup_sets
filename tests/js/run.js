@@ -218,6 +218,45 @@ test("selections: unchecking updates totals; apply + save sends an exclude list"
   assert.equal(put.body.force, false);
 });
 
+test("selections: clicking a checkbox updates that row in place (no list rebuild)", async () => {
+  // Regression: every click rebuilt the whole list, which made the browser jump to the top.
+  const p = await loadPage("selections");
+  await openPicker(p);
+  const row = pickerRow(p, "Small Show");
+  const cb = row.querySelector("input");
+  const others = p.$$("#pk-rows tr");
+  cb.focus();
+  const fitBefore = p.text("#pk-fit");
+  cb.checked = false; p.fire(cb, "change");
+  assert.ok(row.isConnected, "the clicked row must be the same element, not a rebuilt one");
+  assert.deepEqual(p.$$("#pk-rows tr"), others, "no row was replaced");
+  assert.equal(p.d.activeElement, cb, "focus stays on the checkbox");
+  assert.equal(row.className, "off", "row shows as not selected");
+  assert.match(row.textContent, /Apply and save/, "status cell updated");
+  assert.notEqual(p.text("#pk-fit"), fitBefore, "totals updated");
+  cb.checked = true; p.fire(cb, "change");
+  assert.equal(row.className, "");
+  assert.match(row.textContent, /Backed up/);
+  assert.equal(p.text("#pk-fit"), fitBefore, "totals back to where they were");
+});
+
+test("selections: rebuilding the list (Check all, polling) keeps the scroll position", async () => {
+  const p = await loadPage("selections");
+  await openPicker(p);
+  // jsdom has no layout, so emulate the browser: emptying the list snaps scrollTop to 0
+  const scroller = p.$("#picker .modal .body");
+  let top = 0;
+  Object.defineProperty(scroller, "scrollTop", { get: () => top, set: (v) => { top = v; }, configurable: true });
+  const tbody = p.$("#pk-rows");
+  const realRemove = tbody.removeChild.bind(tbody);
+  tbody.removeChild = (n) => { const r = realRemove(n); if (!tbody.firstChild) top = 0; return r; };
+  scroller.scrollTop = 640;
+  p.$("#pk-none").click();
+  assert.equal(scroller.scrollTop, 640);
+  p.$("#pk-all").click();
+  assert.equal(scroller.scrollTop, 640);
+});
+
 test("selections: include mode with nothing checked is refused", async () => {
   const p = await loadPage("selections");
   await openPicker(p);
