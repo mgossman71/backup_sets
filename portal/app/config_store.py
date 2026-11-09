@@ -15,8 +15,11 @@ from .settings import CONFIG_FILE, hostpath
 
 BACKUP_COPY_DIR = os.path.join(os.path.dirname(CONFIG_FILE), "config_backups")
 KEEP_COPIES = 30
-FORBIDDEN_RSYNC = ("-e", "--rsh", "--rsync-path", "--remote-option", "-M", "--daemon",
-                   "--config", "--files-from", "--write-batch", "--read-batch", "--log-file")
+# Options that could run commands, read/write arbitrary files, or delete source data.
+FORBIDDEN_LONG = ("--rsh", "--rsync-path", "--remote-option", "--daemon", "--config", "--files-from",
+                  "--write-batch", "--only-write-batch", "--read-batch", "--log-file", "--remove-source-files",
+                  "--exclude-from", "--include-from", "--password-file", "--write-devices")
+FORBIDDEN_SHORT = {"e": "-e (--rsh)", "M": "-M (--remote-option)"}
 
 
 class ConflictError(Exception):
@@ -184,8 +187,18 @@ def validate(backups, mount_points, rsync_opts):
     for t in tokens:
         if not t.startswith("-"):
             errors.append(f"rsync options: unexpected argument {t!r} (only options are allowed)")
-        elif t.split("=", 1)[0] in FORBIDDEN_RSYNC:
-            errors.append(f"rsync options: {t.split('=', 1)[0]} is not allowed from the portal")
+        elif t.startswith("--"):
+            if t.split("=", 1)[0] in FORBIDDEN_LONG:
+                errors.append(f"rsync options: {t.split('=', 1)[0]} is not allowed from the portal")
+        else:
+            # short options can be clustered ("-avessh" is -a -v -e ssh): check every letter
+            # up to the first one that takes a value
+            bad = next((FORBIDDEN_SHORT[c] for c in t[1:] if c in FORBIDDEN_SHORT), None)
+            if bad:
+                errors.append(f"rsync options: {bad} is not allowed from the portal (in {t!r})")
+    if "--delete-excluded" in tokens:
+        warnings.append("rsync options include --delete-excluded: copies of deselected folders will be "
+                        "deleted from the backup disk on the next run")
     if any(t.startswith("--delete") for t in tokens):
         warnings.append("rsync options include --delete: files removed from a source will also be "
                         "deleted from its backup")
