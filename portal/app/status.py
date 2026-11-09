@@ -1,7 +1,9 @@
 """Live state: flag files, schedule, log tail, and portal action requests."""
+import json
 import os
 import re
 import time
+import uuid
 from datetime import datetime
 
 from croniter import croniter
@@ -9,6 +11,8 @@ from croniter import croniter
 from .settings import BROWSE_ROOTS, CRONTAB_FILE, REQUEST_DIR, STATE_DIR, hostpath
 
 ACTIONS = {"run", "stop_on", "stop_off", "clear_fail"}
+REMOVE_RE = re.compile(r"^remove-([0-9a-f]{32})$")
+REMOVAL_DIR = os.path.join(STATE_DIR, "removals")
 PROGRESS_RE = re.compile(r"^\s*[\d,]+\s+\d{1,3}%\s")
 STATS_RE = re.compile(r"^(Number of |Total |Literal data|Matched data|File list |sent |total size )")
 TS_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (.*)$")
@@ -106,14 +110,55 @@ def current_activity(tail):
     return {"current_job": current, "completed_jobs": done, "last_file": last_file}
 
 
-def request_action(name, user):
-    if name not in ACTIONS:
+def request_action(name, user, payload=None):
+    """Drop a request file for the host bridge (atomic: written elsewhere, then renamed in)."""
+    if name not in ACTIONS and not REMOVE_RE.match(name):
         raise ValueError("unknown action")
     os.makedirs(REQUEST_DIR, exist_ok=True)
     tmp = os.path.join(STATE_DIR, f".req-{name}-{os.getpid()}-{time.time_ns()}")
     with open(tmp, "w") as f:
-        f.write(f"user={user}\n")
+        if payload is not None:
+            json.dump(dict(payload, user=user), f)
+        else:
+            f.write(f"user={user}\n")
     os.replace(tmp, os.path.join(REQUEST_DIR, name))
+
+
+def request_removal(source, destination, folder, user):
+    rid = uuid.uuid4().hex
+    request_action(f"remove-{rid}", user, {"source": source, "destination": destination, "folder": folder})
+    return rid
+
+
+def removals(limit=20):
+    """Recent destination-folder removals: queued (request not yet picked up) + host status files."""
+    out = []
+    for name in pending_actions():
+        m = REMOVE_RE.match(name)
+        if not m:
+            continue
+        try:
+            with open(os.path.join(REQUEST_DIR, name)) as f:
+                req = json.load(f)
+        except (OSError, ValueError):
+            req = {}
+        out.append({"id": m.group(1), "status": "queued", "message": "Waiting for the server",
+                    "folder": req.get("folder"), "source": req.get("source"),
+                    "destination": req.get("destination"), "updated": time.time()})
+    try:
+        names = os.listdir(REMOVAL_DIR)
+    except FileNotFoundError:
+        names = []
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(REMOVAL_DIR, name)) as f:
+                out.append(json.load(f))
+        except (OSError, ValueError):
+            continue
+    out.sort(key=lambda r: r.get("updated") or 0, reverse=True)
+    return out[:limit]
 
 
 def pending_actions():

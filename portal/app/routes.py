@@ -7,7 +7,10 @@ import time
 from flask import (Blueprint, abort, current_app, jsonify, redirect, render_template, request,
                    session, url_for)
 
-from . import auth, config_store, filesystems, status
+import os
+
+from . import auth, config_store, filesystems, folders, status
+from .settings import BROWSE_ROOTS, hostpath
 
 bp = Blueprint("portal", __name__)
 UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
@@ -145,7 +148,7 @@ def api_status():
     return jsonify(
         flags=fl,
         schedules=status.schedules(),
-        pending_actions=status.pending_actions(),
+        pending_actions=[a for a in status.pending_actions() if a in status.ACTIONS],
         activity=status.current_activity(tail) if fl["running"] else None,
         last_run=_fix_running(last, fl["running"]),
         last_success=h.last_with_status("success"),
@@ -223,11 +226,85 @@ def api_config_save():
 @login_required(api=True)
 def api_config_validate():
     body = request.get_json(silent=True) or {}
-    backups = [{"source": config_store._norm(b.get("source")),
-                "destination": config_store._norm(b.get("destination"))} for b in body.get("backups", [])]
+    backups = config_store.normalize_backups(body.get("backups", []))
     mps = [config_store._norm(m) for m in body.get("required_mount_points", []) if str(m).strip()]
     errors, warnings = config_store.validate(backups, mps, " ".join(str(body.get("rsync_opts", "")).split()))
     return jsonify(errors=errors, warnings=warnings)
+
+
+def _in_browse_roots(path):
+    return any(path == r or path.startswith(r.rstrip("/") + "/") for r in BROWSE_ROOTS)
+
+
+def _saved_entry(cfg, source, destination):
+    return next((b for b in cfg["backups"] if b["source"] == source and b["destination"] == destination), None)
+
+
+@bp.get("/api/folders")
+@login_required(api=True)
+def api_folders():
+    source = config_store._norm(request.args.get("source", ""))
+    destination = config_store._norm(request.args.get("destination", ""))
+    for p in (source, destination):
+        if not p.startswith("/") or not _in_browse_roots(p):
+            return jsonify(error=f"paths must be inside {', '.join(BROWSE_ROOTS)}"), 400
+    recent = [r for r in status.removals(50) if r.get("source") == source and r.get("destination") == destination]
+    for r in recent:  # sizes of folders being / just deleted must not come from the cache
+        if r.get("target") and r.get("status") in ("running", "done") and time.time() - (r.get("updated") or 0) < 86400:
+            folders.invalidate(r["target"])
+    try:
+        data = folders.scan(source, destination, refresh=request.args.get("refresh") == "1")
+    except FileNotFoundError:
+        return jsonify(error=f"Source folder not found: {source}"), 404
+    cfg = _cfg()
+    saved = _saved_entry(cfg, source, destination)
+    data["saved_selection"] = ({"mode": saved["mode"], "folders": saved["folders"],
+                                "include_root_files": saved["include_root_files"]} if saved else None)
+    data["dest_fs"] = _fs_brief(filesystems.mount_for(destination, filesystems.usage()))
+    data["removals"] = recent
+    return jsonify(data)
+
+
+def _removable(saved, source, folder):
+    """Same rule the host bridge enforces: deselected in the saved config, or gone from the source."""
+    if saved["mode"] == "exclude" and folder in saved["folders"]:
+        return True
+    if saved["mode"] == "include" and folder not in saved["folders"]:
+        return True
+    return not os.path.lexists(hostpath(os.path.join(source, folder)))
+
+
+@bp.post("/api/remove-dest-folder")
+@login_required(api=True)
+def api_remove_dest_folder():
+    body = request.get_json(silent=True) or {}
+    source = config_store._norm(body.get("source", ""))
+    destination = config_store._norm(body.get("destination", ""))
+    folder = str(body.get("folder", ""))
+    if not config_store.valid_folder_name(folder):
+        return jsonify(error="Invalid folder name"), 400
+    cfg = _cfg()
+    saved = _saved_entry(cfg, source, destination)
+    if not saved:
+        return jsonify(error="That backup entry isn't saved in config.yaml yet - save first"), 409
+    if not _removable(saved, source, folder):
+        return jsonify(error="This folder is still selected for backup. Deselect it and save first."), 409
+    if status.flags(cfg)["running"]:
+        return jsonify(error="A backup is running - try again when it finishes"), 409
+    target = os.path.join(destination, os.path.basename(source), folder)
+    tp = hostpath(target)
+    if os.path.islink(tp) or not os.path.isdir(tp):
+        return jsonify(error=f"Not a folder on the backup disk: {target}"), 404
+    rid = status.request_removal(source, destination, folder, session["user"])
+    folders.invalidate(target)
+    print(f"removal of {target} requested by {session['user']} ({rid})", flush=True)
+    return jsonify(ok=True, id=rid)
+
+
+@bp.get("/api/removals")
+@login_required(api=True)
+def api_removals():
+    return jsonify(removals=status.removals())
 
 
 @bp.get("/api/browse")

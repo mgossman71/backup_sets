@@ -59,9 +59,52 @@ def load():
         "stop_flag": data.get("stop_flag"),
         "history_file": data.get("history_file"),
         "required_mount_points": [str(m) for m in (data.get("required_mount_points") or [])],
-        "backups": [{"source": str(b.get("source", "")), "destination": str(b.get("destination", ""))}
-                    for b in (data.get("backups") or [])],
+        "backups": [_backup_view(b) for b in (data.get("backups") or [])],
     }
+
+
+def _backup_view(b):
+    inc = [str(x) for x in (b.get("include") or [])]
+    exc = [str(x) for x in (b.get("exclude") or [])]
+    if inc and exc:
+        mode = "both"  # invalid: surfaced by validate()
+    elif inc:
+        mode = "include"
+    elif exc:
+        mode = "exclude"
+    else:
+        mode = "all"
+    return {
+        "source": str(b.get("source", "")),
+        "destination": str(b.get("destination", "")),
+        "mode": mode,
+        "folders": inc or exc,
+        "include_root_files": b.get("include_root_files") is not False,
+    }
+
+
+def normalize_backups(raw):
+    """Clean up backup entries coming from the portal UI."""
+    out = []
+    for b in raw or []:
+        mode = b.get("mode") or "all"
+        folders = []
+        for f in b.get("folders") or []:
+            f = str(f)
+            if f not in folders:
+                folders.append(f)
+        out.append({
+            "source": _norm(b.get("source")),
+            "destination": _norm(b.get("destination")),
+            "mode": mode if folders or mode == "include" else "all",
+            "folders": folders if mode in ("include", "exclude") else [],
+            "include_root_files": b.get("include_root_files") is not False,
+        })
+    return out
+
+
+def valid_folder_name(name):
+    return bool(name) and name not in (".", "..") and "/" not in name and "\n" not in name and "\0" not in name
 
 
 def _norm(p):
@@ -117,6 +160,22 @@ def validate(backups, mount_points, rsync_opts):
             warnings.append(f"{n}: destination {dst} is not under a required mount point - if its disk "
                             f"is unmounted, rsync would write into the parent filesystem")
 
+        mode, folders = b.get("mode", "all"), b.get("folders", [])
+        if mode == "both":
+            errors.append(f"{n}: has both include and exclude lists in config.yaml - use only one")
+        elif mode not in ("all", "include", "exclude"):
+            errors.append(f"{n}: unknown folder selection mode {mode!r}")
+        elif mode == "include" and not folders:
+            errors.append(f"{n}: no folders are selected - choose at least one, or back up everything")
+        bad = [f for f in folders if not valid_folder_name(f)]
+        if bad:
+            errors.append(f"{n}: invalid folder name(s): {', '.join(repr(f) for f in bad)}")
+        if mode == "include" and folders and _isdir(src):
+            missing = [f for f in folders if valid_folder_name(f) and not _isdir(os.path.join(src, f))]
+            if missing:
+                warnings.append(f"{n}: {len(missing)} selected folder(s) no longer exist in {src}: "
+                                f"{', '.join(missing[:5])}{'…' if len(missing) > 5 else ''}")
+
     try:
         tokens = shlex.split(rsync_opts)
     except ValueError as e:
@@ -138,8 +197,7 @@ def validate(backups, mount_points, rsync_opts):
 
 def save(new, expected_version, user="portal", force=False):
     """Apply backups / required_mount_points / rsync_opts. Returns (version, warnings)."""
-    backups = [{"source": _norm(b.get("source")), "destination": _norm(b.get("destination"))}
-               for b in new.get("backups", [])]
+    backups = normalize_backups(new.get("backups", []))
     mount_points = [_norm(m) for m in new.get("required_mount_points", []) if str(m).strip()]
     rsync_opts = " ".join(str(new.get("rsync_opts", "")).split())
 
@@ -157,8 +215,7 @@ def save(new, expected_version, user="portal", force=False):
     data = y.load(text)
     data["rsync_opts"] = rsync_opts
     _replace_seq(data, "required_mount_points", mount_points)
-    _replace_seq(data, "backups", [{"source": b["source"], "destination": b["destination"]}
-                                   for b in backups])
+    _replace_seq(data, "backups", [_entry_map(b) for b in backups])
     buf = io.StringIO()
     y.dump(data, buf)
     out = buf.getvalue()
@@ -173,33 +230,65 @@ def save(new, expected_version, user="portal", force=False):
     return version_of(out), warnings
 
 
+def _entry_map(b):
+    m = CommentedMap()
+    m["source"] = b["source"]
+    m["destination"] = b["destination"]
+    if b["mode"] in ("include", "exclude") and b["folders"]:
+        m[b["mode"]] = CommentedSeq(b["folders"])
+        if b["mode"] == "include" and not b["include_root_files"]:
+            m["include_root_files"] = False
+    return m
+
+
+def _blank():
+    return CommentToken("\n\n", CommentMark(0), None)
+
+
+def _get_after(node):
+    """The comment token that follows a backup entry / list item (blank lines, trailing comments)."""
+    if isinstance(node, CommentedMap) and len(node):
+        last_key = list(node.keys())[-1]
+        val = node[last_key]
+        if isinstance(val, CommentedSeq) and len(val):
+            tok = val.ca.items.get(len(val) - 1)
+            return tok[0] if tok else None
+        tok = node.ca.items.get(last_key)
+        return tok[2] if tok and len(tok) > 2 else None
+    return None
+
+
+def _set_after(node, token):
+    last_key = list(node.keys())[-1]
+    val = node[last_key]
+    if isinstance(val, CommentedSeq) and len(val):
+        val.ca.items[len(val) - 1] = [token, None]
+    else:
+        node.ca.items[last_key] = [None, None, token, None]
+
+
 def _replace_seq(data, key, items):
-    """Replace a sequence's items in place, keeping the comment that trails the
-    sequence (e.g. the example block after the last backup entry)."""
+    """Replace a sequence's items in place, keeping blank lines between entries and the
+    comment that trails the sequence (e.g. the example block after the last backup entry)."""
     old = data.get(key)
     seq = old if isinstance(old, CommentedSeq) else CommentedSeq()
     trailing = None
     if len(seq):
         last = seq[-1]
-        if isinstance(last, CommentedMap) and last.ca.items:
-            trailing = last.ca.items.get(list(last.keys())[-1])
+        if isinstance(last, CommentedMap):
+            trailing = _get_after(last)
         elif seq.ca.items.get(len(seq) - 1):
             trailing = seq.ca.items.get(len(seq) - 1)
     seq.clear()
     seq.ca.items.clear()
     for i, item in enumerate(items):
-        if isinstance(item, dict):
-            m = CommentedMap(item)
-            seq.append(m)
-            if i < len(items) - 1:
-                # blank line between backup entries, as in the hand-written file
-                m.ca.items[list(m.keys())[-1]] = [None, None, CommentToken("\n\n", CommentMark(0), None), None]
-        else:
-            seq.append(item)
-    if items and trailing:
+        seq.append(item)
+        if isinstance(item, CommentedMap) and i < len(items) - 1:
+            _set_after(item, _blank())
+    if items and trailing is not None:
         last = seq[-1]
         if isinstance(last, CommentedMap):
-            last.ca.items[list(last.keys())[-1]] = trailing
+            _set_after(last, trailing)
         else:
             seq.ca.items[len(seq) - 1] = trailing
     data[key] = seq
