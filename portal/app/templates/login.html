@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Backup Sets</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ asset_v }}">
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="card login-card">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Backup Sets</div>
+      <p class="muted small">Sign in with your server account.</p>
+      {% if error %}<div class="msg error" role="alert">{{ error }}</div>{% endif %}
+      <form method="post">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <label>Username <input type="text" name="username" autocomplete="username" autocapitalize="none" required autofocus></label>
+        <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">Sign in</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

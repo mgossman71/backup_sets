@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{% block title %}{% endblock %} · Backup Sets</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ asset_v }}">
+</head>
+<body data-page="{{ page }}">
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('portal.dashboard') }}"><span class="brand-mark" aria-hidden="true"></span>Backup Sets</a>
+    <nav aria-label="Main">
+      <a href="{{ url_for('portal.dashboard') }}" {% if page == 'dashboard' %}aria-current="page"{% endif %}>Dashboard</a>
+      <a href="{{ url_for('portal.selections') }}" {% if page == 'selections' %}aria-current="page"{% endif %}>Backup selections</a>
+      <a href="{{ url_for('portal.history_page') }}" {% if page == 'history' %}aria-current="page"{% endif %}>History</a>
+      <a href="{{ url_for('portal.filesystems_page') }}" {% if page == 'filesystems' %}aria-current="page"{% endif %}>Filesystems</a>
+    </nav>
+    <div class="user">
+      <span>{{ user }}</span>
+      <form method="post" action="{{ url_for('portal.logout') }}">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <button class="link" type="submit">Sign out</button>
+      </form>
+    </div>
+  </header>
+  <main class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="{{ url_for('static', filename='app.js') }}?v={{ asset_v }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

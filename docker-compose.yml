@@ -1,0 +1,25 @@
+# Backup Sets web portal.  Install the host side first:  sudo bash host/install.sh
+services:
+  backup-portal:
+    build: ./portal
+    image: backup-portal:latest
+    container_name: backup-portal
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    environment:
+      ALLOWED_GROUP: sudo          # members of this host group may sign in
+      ALLOWED_USERS: root          # plus these users (comma-separated)
+      BROWSE_ROOTS: /mnt           # folder browser is limited to these trees
+      TZ: Etc/UTC
+    volumes:
+      # Host filesystem, read-only: df, mount table, flag files, log, account files
+      - type: bind
+        source: /
+        target: /host
+        read_only: true
+        bind:
+          propagation: rslave
+      # Config (edited by the portal) and portal state (history, requests, TLS, db)
+      - /opt/backup_sets:/opt/backup_sets
+      - /var/lib/backup_sets:/var/lib/backup_sets

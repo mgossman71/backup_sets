@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Backup selections{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Backup selections</h1>
+  <span class="spacer"></span>
+  <span class="small muted" id="cfg-path"></span>
+</div>
+<p class="ink2">Each source folder is copied into its destination, as <span class="mono">destination/&lt;folder name&gt;</span>. Backups run one after another, in this order.</p>
+
+<div id="load-error"></div>
+
+<section class="card" aria-labelledby="b-h">
+  <div class="card-head">
+    <h2 id="b-h">Backups</h2><span class="spacer"></span>
+    <button id="add-backup">+ Add backup</button>
+  </div>
+  <div id="backups"></div>
+</section>
+
+<div class="grid cols-2">
+  <section class="card" aria-labelledby="m-h">
+    <div class="card-head"><h2 id="m-h">Required mount points</h2><span class="spacer"></span><button id="add-mount">+ Add</button></div>
+    <p class="small ink2">Backups won't start unless every one of these is mounted. That keeps rsync from filling the root disk when a USB drive is missing.</p>
+    <div class="chip-list" id="mounts"></div>
+  </section>
+  <section class="card" aria-labelledby="r-h">
+    <div class="card-head"><h2 id="r-h">rsync options</h2></div>
+    <input type="text" id="rsync-opts" class="path" spellcheck="false" aria-labelledby="r-h">
+    <p class="small ink2">Passed to every rsync run. <span class="mono">-a</span> keeps permissions and timestamps; <span class="mono">--stats</span> is needed for history metrics. Remote-shell options are blocked here.</p>
+  </section>
+</div>
+
+<div class="savebar" id="savebar">
+  <span id="dirty-note" class="ink2">No unsaved changes</span>
+  <span class="spacer"></span>
+  <button id="revert" disabled>Discard changes</button>
+  <button id="save" class="primary" disabled>Save to config.yaml</button>
+</div>
+<div id="messages" aria-live="polite"></div>
+<p class="small muted" id="copies"></p>
+
+<div class="modal-backdrop" id="browser" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="br-h">
+    <header><h2 id="br-h">Choose a folder</h2></header>
+    <div class="crumbs" id="br-crumbs"></div>
+    <div class="body"><div class="dirlist" id="br-list"></div></div>
+    <footer>
+      <span class="mono small ink2" id="br-current"></span>
+      <span class="spacer"></span>
+      <button id="br-cancel">Cancel</button>
+      <button id="br-select" class="primary">Select this folder</button>
+    </footer>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='selections.js') }}?v={{ asset_v }}"></script>{% endblock %}

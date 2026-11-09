@@ -392,3 +392,62 @@ backups:
 6. **Error propagation**: If any backup fails, all stop and flag is set
 7. **Configuration validation**: Checks for required settings and valid YAML
 8. **Dependency check**: Verifies yq is installed before running
+
+## Web Portal
+
+A web portal for managing backup selections, viewing backup history and metrics, and watching how full each filesystem is.
+
+```
+browser ──HTTPS :8443──▶ backup-portal container (Flask/gunicorn)
+                           reads host / (read-only) → df, mount table, flags, log, accounts
+                           edits /opt/backup_sets/config.yaml
+                           writes /var/lib/backup_sets (history index, action requests)
+                                       │  request files
+                                       ▼
+                 host: backup-portal-actions.path → host/actions.sh
+                       (run backup.sh / pause / resume / clear fail flag)
+```
+
+The container never runs rsync and never writes to `/mnt`. Backups still run on the host
+from cron, exactly as before. "Run now", "Pause", and "Clear failed" go through
+a small systemd path unit on the host.
+
+### Install / start
+```bash
+sudo bash /opt/backup_sets/host/install.sh      # state dir, systemd bridge, TLS cert, history backfill, logrotate
+cd /opt/backup_sets && sudo docker compose up -d --build
+```
+Then open **https://<server-ip>:8443**. The certificate is self-signed (in `/var/lib/backup_sets/tls/`),
+so your browser will warn the first time. Replace `cert.pem`/`key.pem` with your own certificate if you have one.
+
+### Sign in
+Use a local Linux account on the server. Accounts are allowed if they're in the `sudo` group (`ALLOWED_GROUP`)
+or listed in `ALLOWED_USERS` in `docker-compose.yml`. Passwords are checked against the host's
+`/etc/shadow`, so password changes apply immediately. Locked accounts (e.g. root with no password) cannot sign in.
+Repeated failures from one IP are rate-limited (5 per 5 minutes).
+
+### Pages
+- **Dashboard**: status (healthy / running / failed / paused), next scheduled run, Run now / Pause / Resume /
+  Clear failed buttons, the last run's per-job results, backup filesystem fullness, and a live log tail.
+- **Backup selections**: add, edit, reorder, or remove source → destination pairs, with a folder browser
+  (limited to `/mnt`). You can also edit required mount points and rsync options. Saves are validated (paths exist,
+  no two sources writing to the same folder, no remote-shell rsync options). Each save keeps a copy of the
+  previous file in `config_backups/`.
+- **History**: every run with per-job rsync stats. Charts show data copied per day, run outcomes, run duration,
+  and source size growth.
+- **Filesystems**: every real filesystem with size, used, and free space, warnings at 85% and 95%, growth rate, and a
+  projected "full in" time. The portal records a usage snapshot every hour for the trend chart.
+
+### History records
+`backup.sh` now appends one JSON line per job and one per run to `history_file`
+(default `/var/lib/backup_sets/history.jsonl`; requires `jq`). Runs from before this change were
+imported once from the text log by `tools/backfill_history.py` into `history_backfill.jsonl`.
+The portal indexes both files into `/var/lib/backup_sets/portal.db`.
+
+`backup.sh` also accepts two environment overrides: `BACKUP_CONFIG=/path/to/config.yaml` and
+`BACKUP_TRIGGER=<label>` (recorded as the run's trigger; defaults to `cron`, or `manual` from a terminal).
+
+### Troubleshooting
+- Portal logs: `docker logs backup-portal`
+- Buttons say "Requests are still waiting": check `systemctl status backup-portal-actions.path`
+- Action audit trail: lines starting with `Portal action:` in the backup log

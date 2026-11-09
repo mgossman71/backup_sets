@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Dashboard</h1>
+  <span class="spacer"></span>
+  <span id="indexing" class="pill info" hidden>Indexing history…</span>
+</div>
+
+<div class="grid cols-2">
+  <section class="card" aria-labelledby="st-h">
+    <div class="card-head"><h2 id="st-h">Backup status</h2></div>
+    <div id="status-main" class="big-status"></div>
+    <div id="status-flags" class="row"></div>
+    <div id="activity" class="small ink2"></div>
+    <div class="row" id="actions">
+      <button id="btn-run" class="primary">Run backup now</button>
+      <button id="btn-stop">Pause scheduled backups</button>
+      <button id="btn-clear" hidden>Clear failed status</button>
+    </div>
+    <p id="pending" class="small muted" hidden></p>
+  </section>
+
+  <section class="card" aria-labelledby="lr-h">
+    <div class="card-head"><h2 id="lr-h">Last run</h2><span class="spacer"></span><a class="small" href="{{ url_for('portal.history_page') }}">All history →</a></div>
+    <div id="last-run"></div>
+  </section>
+</div>
+
+<div class="grid tiles" id="tiles"></div>
+
+<section class="card" aria-labelledby="fs-h">
+  <div class="card-head"><h2 id="fs-h">Backup filesystems</h2><span class="spacer"></span><a class="small" href="{{ url_for('portal.filesystems_page') }}">All filesystems →</a></div>
+  <div class="grid cols-3" id="fs-tiles"></div>
+</section>
+
+<section class="card" aria-labelledby="log-h">
+  <div class="card-head">
+    <h2 id="log-h">Backup log</h2><span class="spacer"></span>
+    <label class="check small"><input type="checkbox" id="log-follow" checked> Follow</label>
+  </div>
+  <div class="log" id="log" tabindex="0" aria-label="Recent log lines"></div>
+  <p class="small muted">Showing the most recent lines of the backup log. Per-file rsync progress counters are hidden.</p>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='dashboard.js') }}?v={{ asset_v }}"></script>{% endblock %}
