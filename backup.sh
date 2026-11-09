@@ -39,6 +39,9 @@ CURRENT_JOB_SOURCE=""
 CURRENT_JOB_DEST=""
 CURRENT_JOB_START=""
 JOBS_DONE=0
+FILTER_FILE=""
+SELECTION_MODE="all"
+SELECTION_COUNT=0
 
 #------------------------------------------------------------------------------
 # FUNCTIONS
@@ -181,8 +184,11 @@ record_job() {
         --argjson transferred_bytes "$(num_or_null "$xfer_size")" \
         --argjson sent_bytes "$(num_or_null "$sent")" \
         --argjson bytes_per_sec "$(num_or_null "$rate")" \
+        --arg sel_mode "$SELECTION_MODE" \
+        --argjson sel_count "$(num_or_null "$SELECTION_COUNT")" \
         '{type:"job", run_id:$run_id, source:$source, dest:$dest, start:$start, end:$end,
           status:$status, rc:$rc, reason:(if $reason == "" then null else $reason end),
+          selection:{mode:$sel_mode, count:$sel_count},
           stats:{files:$files, created:$created, deleted:$deleted,
                  transferred_files:$transferred_files, total_size:$total_size,
                  transferred_bytes:$transferred_bytes, sent_bytes:$sent_bytes,
@@ -225,8 +231,84 @@ error_exit() {
     exit 1
 }
 
+#------------------------------------------------------------------------------
+# FOLDER SELECTION (per backup entry: include / exclude top-level folders)
+#------------------------------------------------------------------------------
+
+# Escape an rsync filter pattern. rsync only honours backslash escapes when the
+# pattern contains a wildcard, so escape only in that case.
+rsync_escape() {
+    local n="$1"
+    if [[ "$n" == *[\*\?\[]* ]]; then
+        n="${n//\\/\\\\}"
+        n="${n//\*/\\*}"
+        n="${n//\?/\\?}"
+        n="${n//\[/\\[}"
+    fi
+    printf '%s' "$n"
+}
+
+# Validate a folder name from the config and append "<prefix> /<name>/" to the filter file
+add_filter_rule() {
+    local prefix="$1" name="$2"
+    if [ -z "$name" ] || [ "$name" = "." ] || [ "$name" = ".." ] || [[ "$name" == */* ]]; then
+        error_exit "Invalid folder name in selection for $CURRENT_JOB_SOURCE: '$name'"
+    fi
+    printf '%s /%s/\n' "$prefix" "$(rsync_escape "$name")" >> "$FILTER_FILE"
+}
+
+# Build the rsync filter file for backup entry <index>. Sets FILTER_FILE,
+# SELECTION_MODE (all|include|exclude) and SELECTION_COUNT.
+build_filter_file() {
+    local i="$1"
+    local inc_n exc_n name
+    inc_n=$(yq_read ".backups[$i].include // [] | length" "$CONFIG_FILE")
+    exc_n=$(yq_read ".backups[$i].exclude // [] | length" "$CONFIG_FILE")
+    inc_n=${inc_n:-0}; exc_n=${exc_n:-0}
+
+    SELECTION_MODE="all"
+    SELECTION_COUNT=0
+    FILTER_FILE=$(mktemp /tmp/backup_sets_filter.XXXXXX)
+
+    if [ "$inc_n" -gt 0 ] && [ "$exc_n" -gt 0 ]; then
+        error_exit "Backup entry $i has both include and exclude lists - use only one"
+    fi
+
+    if [ "$exc_n" -gt 0 ]; then
+        SELECTION_MODE="exclude"
+        SELECTION_COUNT=$exc_n
+        while IFS= read -r name; do
+            add_filter_rule "-" "$name"
+        done < <(yq_read ".backups[$i].exclude[]" "$CONFIG_FILE")
+        log "Selection: excluding $exc_n folder(s)"
+    elif [ "$inc_n" -gt 0 ]; then
+        SELECTION_MODE="include"
+        SELECTION_COUNT=$inc_n
+        while IFS= read -r name; do
+            add_filter_rule "+" "$name"
+        done < <(yq_read ".backups[$i].include[]" "$CONFIG_FILE")
+        # everything else at the top level: other folders are skipped ...
+        echo "- /*/" >> "$FILTER_FILE"
+        # ... and loose top-level files too, unless include_root_files is true (default)
+        if [ "$(yq_read ".backups[$i].include_root_files" "$CONFIG_FILE")" = "false" ]; then
+            echo "- /*" >> "$FILTER_FILE"
+            log "Selection: only $inc_n folder(s), no loose top-level files"
+        else
+            log "Selection: only $inc_n folder(s) plus loose top-level files"
+        fi
+    fi
+}
+
+remove_filter_file() {
+    if [ -n "$FILTER_FILE" ]; then
+        rm -f "$FILTER_FILE"
+        FILTER_FILE=""
+    fi
+}
+
 # Cleanup function
 cleanup() {
+    remove_filter_file
     if [ -f "$RUNNING_FLAG" ]; then
         rm -f "$RUNNING_FLAG"
         log "Removed running flag"
@@ -295,6 +377,7 @@ set_running_flag() {
 backup_folder() {
     local source_path="$1"
     local dest_base="$2"
+    local index="$3"
 
     # Extract just the folder name from the source path for destination
     local folder_name=$(basename "$source_path")
@@ -326,14 +409,19 @@ backup_folder() {
         mkdir -p "$dest_path" || error_exit "Failed to create destination: $dest_path"
     fi
 
+    # Folder selection (include/exclude lists) for this entry
+    build_filter_file "$index"
+
     # Run rsync - full output goes to the log; the tail (with --stats) is kept for history
-    log "Running: rsync $RSYNC_OPTS $source_path/ $dest_path/"
+    log "Running: rsync $RSYNC_OPTS --filter=\"merge <selection>\" $source_path/ $dest_path/"
 
     local stats_file
     stats_file=$(mktemp /tmp/backup_sets_stats.XXXXXX)
 
-    rsync $RSYNC_OPTS "$source_path/" "$dest_path/" 2>&1 | tee -a "$LOG_FILE" | tail -n 100 > "$stats_file"
+    rsync $RSYNC_OPTS --filter="merge $FILTER_FILE" "$source_path/" "$dest_path/" 2>&1 \
+        | tee -a "$LOG_FILE" | tail -n 100 > "$stats_file"
     local rc=${PIPESTATUS[0]}
+    remove_filter_file
 
     if [ "$rc" -eq 0 ]; then
         log "Successfully completed backup: $folder_name"
@@ -376,7 +464,7 @@ process_backups() {
         fi
 
         # Run backup (blocking - waits for completion)
-        backup_folder "$source_path" "$destination"
+        backup_folder "$source_path" "$destination" "$i"
     done
 
     log "All backup jobs completed successfully"
