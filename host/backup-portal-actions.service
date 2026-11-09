@@ -1,0 +1,6 @@
+[Unit]
+Description=Execute backup portal action requests
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/backup_sets/host/actions.sh

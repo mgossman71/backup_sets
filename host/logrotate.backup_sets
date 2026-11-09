@@ -1,0 +1,9 @@
+/var/log/backup_sets.log /var/log/backup_sets_cron.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
