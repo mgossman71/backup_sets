@@ -81,6 +81,17 @@ def test_security_headers(authed):
     assert h["X-Content-Type-Options"] == "nosniff"
 
 
+@pytest.mark.parametrize("url", PAGES + ["/api/status", "/api/config"])
+def test_pages_and_api_are_never_cached(authed, url):
+    """After a portal update a normal reload must fetch the new page (and so the new scripts)."""
+    assert authed.get(url).headers["Cache-Control"] == "no-store"
+
+
+def test_scripts_are_version_stamped(authed):
+    html = authed.get("/selections").get_data(as_text=True)
+    assert "folderpicker.js?v=" in html and "app.js?v=" in html
+
+
 def test_healthz_is_public(client):
     assert client.get("/healthz").data == b"ok"
 

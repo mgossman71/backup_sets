@@ -63,6 +63,10 @@ def create_app():
             "frame-ancestors 'none'; form-action 'self'")
         if tls:
             resp.headers["Strict-Transport-Security"] = "max-age=31536000"
+        # Pages (and API data) are never cached, so after an update a normal reload always
+        # gets the new page - which references the new, version-stamped scripts.
+        if resp.mimetype in ("text/html", "application/json"):
+            resp.headers["Cache-Control"] = "no-store"
         return resp
 
     return app
