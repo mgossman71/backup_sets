@@ -11,6 +11,8 @@
 #       Deletes <destination>/<basename source>/<folder> from a backup disk.
 #       Re-validated here against the SAVED config.yaml: the folder must be
 #       deselected for that backup entry (or no longer exist in the source).
+#   schedule                             content: JSON {user, id, enabled, expr}
+#       Rewrites the portal's block in root's crontab (host/schedule.py).
 #   cleanup-<32 hex>                     content: JSON {user}
 #       Backup Folder Cleanup: runs host/cleanup.py on the plan
 #       $STATE_DIR/cleanup/<id>.json, which re-validates every path.
@@ -167,6 +169,11 @@ for req in "$REQUEST_DIR"/*; do
             ;;
         clear_fail)
             valid_path "$FAIL_FLAG" && rm -f "$FAIL_FLAG" && log "fail flag cleared by $user ($FAIL_FLAG)"
+            ;;
+        schedule)
+            # quick, so run directly; schedule.py validates and rewrites only its own crontab block
+            /usr/bin/env python3 -I "$SCRIPT_DIR/schedule.py" "$content" "$LOG_FILE" \
+                "$STATE_DIR/schedule_status.json" "$BACKUP_DIR" || true
             ;;
         cleanup-*)
             if [[ "$action" =~ ^cleanup-([0-9a-f]{32})$ ]]; then

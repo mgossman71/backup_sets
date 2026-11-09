@@ -30,7 +30,8 @@
         "Next scheduled run: ", el("b", { text: sch.next ? fmtTime(sch.next) : "?" }),
         sch.next ? " (" + relTime(sch.next) + ")" : "", el("span", { class: "muted mono", text: "  " + sch.expr })));
     }
-    if (!s.schedules.length) flags.append(el("span", { class: "pill warning", text: "No backup.sh entry found in root's crontab" }));
+    if (!s.schedules.length) flags.append(el("span", { class: "pill warning", text: "Automatic backups are off: no schedule is set" }));
+    flags.append(el("a", { class: "small", href: "/selections#schedule", text: s.schedules.length ? "Change schedule" : "Set a schedule" }));
 
     const act = clear($("#activity"));
     if (f.running && s.activity) {

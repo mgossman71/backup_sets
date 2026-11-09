@@ -113,7 +113,7 @@ def current_activity(tail):
 
 def request_action(name, user, payload=None):
     """Drop a request file for the host bridge (atomic: written elsewhere, then renamed in)."""
-    if name not in ACTIONS and not REMOVE_RE.match(name) and not CLEANUP_RE.match(name):
+    if name not in ACTIONS and name != "schedule" and not REMOVE_RE.match(name) and not CLEANUP_RE.match(name):
         raise ValueError("unknown action")
     os.makedirs(REQUEST_DIR, exist_ok=True)
     tmp = os.path.join(STATE_DIR, f".req-{name}-{os.getpid()}-{time.time_ns()}")

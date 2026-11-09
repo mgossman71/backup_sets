@@ -18,6 +18,38 @@
   <div id="backups"></div>
 </section>
 
+<section class="card" id="schedule" aria-labelledby="sch-h">
+  <div class="card-head">
+    <h2 id="sch-h">Schedule</h2><span class="spacer"></span>
+    <label class="check"><input type="checkbox" id="sch-enabled"> Automatic backups</label>
+  </div>
+  <div id="sch-notes"></div>
+  <div class="sch-form" id="sch-form">
+    <label class="sch-field">Run
+      <select id="sch-kind">
+        <option value="daily">Every day</option>
+        <option value="weekdays">On selected days</option>
+        <option value="hours">Every few hours</option>
+        <option value="advanced">Custom (cron)</option>
+      </select>
+    </label>
+    <label class="sch-field" id="sch-time-wrap">at <input type="time" id="sch-time" value="02:00" step="60"> <span class="small muted" id="sch-tz">server time</span></label>
+    <div class="sch-field" id="sch-days" role="group" aria-label="Days of the week"></div>
+    <label class="sch-field" id="sch-every-wrap">every
+      <select id="sch-every"><option>1</option><option>2</option><option>3</option><option>4</option><option>6</option><option>8</option><option>12</option></select>
+      hour(s), at minute <input type="text" id="sch-minute" value="0" inputmode="numeric" class="sch-num" aria-label="Minute past the hour"></label>
+    <label class="sch-field" id="sch-expr-wrap">cron
+      <input type="text" id="sch-expr" class="path sch-expr" spellcheck="false" placeholder="0 2 * * *" aria-label="Cron expression">
+      <span class="small muted">minute hour day month weekday</span></label>
+  </div>
+  <div class="small" id="sch-preview" aria-live="polite"></div>
+  <div class="row sch-actions">
+    <button type="button" class="primary" id="sch-save" disabled>Save schedule</button>
+    <span class="small ink2" id="sch-status" aria-live="polite"></span>
+  </div>
+  <p class="small muted">The schedule is saved to root's crontab right away. It runs every backup set above, in order. A run that starts while another is still going is skipped.</p>
+</section>
+
 <div class="grid cols-2">
   <section class="card" aria-labelledby="m-h">
     <div class="card-head"><h2 id="m-h">Required mount points</h2><span class="spacer"></span><button id="add-mount">+ Add</button></div>
@@ -123,5 +155,6 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='folderpicker.js') }}?v={{ asset_v }}"></script>
 <script src="{{ url_for('static', filename='cleanup.js') }}?v={{ asset_v }}"></script>
+<script src="{{ url_for('static', filename='schedule.js') }}?v={{ asset_v }}"></script>
 <script src="{{ url_for('static', filename='selections.js') }}?v={{ asset_v }}"></script>
 {% endblock %}

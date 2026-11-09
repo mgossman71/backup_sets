@@ -7,10 +7,12 @@ import time
 from flask import (Blueprint, abort, current_app, jsonify, redirect, render_template, request,
                    session, url_for)
 
+import json
 import os
+import uuid
 
-from . import auth, cleanup, config_store, filesystems, folders, status
-from .settings import BROWSE_ROOTS, hostpath
+from . import auth, cleanup, config_store, filesystems, folders, schedule, status
+from .settings import BROWSE_ROOTS, STATE_DIR, hostpath
 
 bp = Blueprint("portal", __name__)
 UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
@@ -359,6 +361,69 @@ def api_cleanup_status(plan_id):
         st = ({"status": "queued", "message": "Waiting for the server"}
               if f"cleanup-{plan_id}" in status.pending_actions() else {"status": "planned"})
     return jsonify(dict(st, id=plan_id, total_items=p["total_items"], total_size=p["total_size"]))
+
+
+def _schedule_status():
+    try:
+        with open(os.path.join(STATE_DIR, "schedule_status.json")) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _schedule_view():
+    cron = schedule.read_crontab()
+    m = cron["managed"]
+    view = {"enabled": bool(m and m["enabled"]), "expr": m["expr"] if m else None,
+            "managed": m is not None, "unmanaged": cron["unmanaged"], "broken": cron["broken"],
+            "pending": "schedule" in status.pending_actions(), "last_status": _schedule_status(),
+            "timezone": time.strftime("%Z"), "server_time": time.time()}
+    if m and not schedule.validate(m["expr"]):
+        view["form"] = schedule.describe(m["expr"])
+        view["next_runs"] = schedule.next_runs(m["expr"]) if m["enabled"] else []
+    else:
+        view["form"] = {"kind": "daily", "time": "02:00", "text": "Daily at 02:00"}
+        view["next_runs"] = []
+    return view
+
+
+def _expr_from(body):
+    try:
+        expr = schedule.from_preset(body)
+    except ValueError as e:
+        return None, [str(e)]
+    errors = schedule.validate(expr)
+    return (None, errors) if errors else (expr, [])
+
+
+@bp.get("/api/schedule")
+@login_required(api=True)
+def api_schedule():
+    return jsonify(_schedule_view())
+
+
+@bp.post("/api/schedule/preview")
+@login_required(api=True)
+def api_schedule_preview():
+    expr, errors = _expr_from(request.get_json(silent=True) or {})
+    if errors:
+        return jsonify(errors=errors), 422
+    return jsonify(expr=expr, form=schedule.describe(expr), next_runs=schedule.next_runs(expr))
+
+
+@bp.put("/api/schedule")
+@login_required(api=True)
+def api_schedule_save():
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body.get("enabled"), bool):
+        return jsonify(errors=["Choose whether automatic backups are on or off"]), 422
+    expr, errors = _expr_from(body)
+    if errors:
+        return jsonify(errors=errors), 422
+    rid = uuid.uuid4().hex
+    status.request_action("schedule", session["user"], {"id": rid, "enabled": body["enabled"], "expr": expr})
+    print(f"schedule change requested by {session['user']}: enabled={body['enabled']} expr={expr!r}", flush=True)
+    return jsonify(ok=True, id=rid, expr=expr)
 
 
 @bp.get("/api/removals")

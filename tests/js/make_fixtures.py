@@ -73,6 +73,10 @@ for url in ["/api/status", "/api/log", "/api/filesystems", "/api/filesystems/tre
     assert r.status_code == 200, (url, r.status_code)
     api[url.split("?")[0]] = r.get_json()
 api["/api/history/run"] = c.get("/api/history/run/run9").get_json()
+api["/api/schedule"] = c.get("/api/schedule").get_json()
+r = c.post("/api/schedule/preview", headers={"X-CSRF-Token": "T"}, json={"kind": "daily", "time": "02:00"})
+assert r.status_code == 200, r.get_json()
+api["POST /api/schedule/preview"] = r.get_json()
 
 # a hostile folder name: must be shown as text, never interpreted as HTML
 api["/api/folders"]["folders"].append({"name": '<img src=x onerror="window.__xss=1">', "in_source": True,

@@ -494,6 +494,26 @@ be deselected for that backup entry (or gone from the source), must be a real di
 `<destination>/<source folder name>/`, and no backup can be running. The source is never touched.
 Every removal is logged as a `Portal action:` line in the backup log.
 
+### Scheduling
+The **Schedule** card on the portal's **Backup selections** page sets when backups run automatically:
+every day at a time, on selected days, every few hours, or a custom cron expression. It also has an
+**Automatic backups** on/off switch. Times are server time (UTC); the preview also shows your browser's
+local time. One schedule runs every backup set, in order. A run that starts while another is still
+going is skipped.
+
+Saving applies the schedule to root's crontab right away. The host (`host/schedule.py`) only ever rewrites
+its own marked block:
+```
+# BEGIN backup_sets schedule (managed by the backup portal - change it there)
+0 2 * * * bash /opt/backup_sets/backup.sh >> /var/log/backup_sets_cron.log 2>&1
+# END backup_sets schedule
+```
+- Turning automatic backups off comments out the line inside the block, so the schedule is remembered.
+- The portal only supplies the 5 time fields, and the host validates them again. The command is fixed by the host.
+- Any other *active* line that runs this `backup.sh` is commented out (prefixed `#[moved to portal schedule]`),
+  so backups never run twice. Other crontab lines are never changed.
+- If `crontab` rejects the change, the existing crontab is left as it was and the portal shows the error.
+
 ### Backup Folder Cleanup
 Backups never delete anything on their own (rsync runs without `--delete`), so files you delete from a
 source stay in its backup. Each backup set on **Backup selections** has a **Backup Folder Cleanup**
@@ -532,6 +552,8 @@ if anything fails.
 | Action bridge | `tests/shell/test_actions.py` | run / pause / resume / clear requests, and every safety rule for removing folders from a backup disk |
 | Cleanup (host) | `tests/shell/test_cleanup.py` | every safety rule of Backup Folder Cleanup |
 | Cleanup (portal) | `tests/portal/test_cleanup_api.py` | the comparison, protected folders, confirmation and refusals |
+| Schedule (host) | `tests/shell/test_schedule.py` | crontab block rewriting, other lines untouched, injection attempts refused |
+| Schedule (portal) | `tests/portal/test_schedule_api.py` | presets, validation (same rules as the host), reading the crontab, the save request |
 | History import | `tests/shell/test_backfill.py` | parsing the old text log |
 | Login | `tests/portal/test_auth.py` | host-account passwords, allowed group, locked/expired accounts, rate limiting, sessions |
 | Config | `tests/portal/test_config_store.py` | reading/writing config.yaml (comments kept), validation, blocked rsync options |

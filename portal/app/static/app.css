@@ -312,3 +312,15 @@ button.small-btn { padding: 2px 8px; font-size: 12px; }
 button.danger-solid { background: var(--critical); border-color: var(--critical); color: #fff; }
 button.danger-solid:hover:not(:disabled) { background: var(--critical); filter: brightness(1.08); }
 .confirm-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-2); }
+
+/* ---------- schedule ---------- */
+.sch-form { display: flex; gap: 10px 16px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.sch-field { display: inline-flex; gap: 6px; align-items: center; color: var(--ink-2); flex-wrap: wrap; }
+.sch-field input[type=time] { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--axis); border-radius: 7px; padding: 5px 8px; }
+.sch-num { width: 4em; }
+.sch-expr { width: 14em; }
+.sch-day { display: inline-flex; gap: 4px; align-items: center; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+.sch-day input { margin: 0; }
+.sch-actions { margin: 10px 0 4px; }
+#sch-preview .next { color: var(--ink-2); }
+.sch-form.off { opacity: .55; }

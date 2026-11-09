@@ -24,18 +24,22 @@ async function loadPage(page, { api = API, respond } = {}) {
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "https://portal.test/" + page,
                                 pretendToBeVisual: true, virtualConsole: vc });
   const w = dom.window;
-  const sent = [];
+  const sent = [], previews = [];
   const data = JSON.parse(JSON.stringify(api));
   w.fetch = async (url, opts = {}) => {
     const u = new URL(url, "https://portal.test");
     const method = opts.method || "GET";
     let p = u.pathname.startsWith("/api/history/run/") ? "/api/history/run" : u.pathname;
-    if (method !== "GET") sent.push({ method, path: u.pathname, body: opts.body ? JSON.parse(opts.body) : null,
-                                      csrf: opts.headers && opts.headers["X-CSRF-Token"] });
+    // previews have no side effects, so they are tracked apart from the requests that change things
+    const rec = { method, path: u.pathname, body: opts.body ? JSON.parse(opts.body) : null,
+                  csrf: opts.headers && opts.headers["X-CSRF-Token"] };
+    if (u.pathname === "/api/schedule/preview") previews.push(rec);
+    else if (method !== "GET") sent.push(rec);
     let status = 200, body;
     const custom = respond && respond(method, p, opts.body ? JSON.parse(opts.body) : null);
     if (custom) ({ status, body } = custom);
     else if (method === "GET") body = data[p];
+    else if (data[method + " " + p] !== undefined) body = data[method + " " + p];
     else body = { ok: true, id: "0".repeat(32), version: "v2", warnings: [] };
     if (body === undefined) errors.push("no fixture for " + method + " " + p);
     return { ok: status < 400, status, json: async () => JSON.parse(JSON.stringify(body)) };
@@ -57,7 +61,7 @@ async function loadPage(page, { api = API, respond } = {}) {
   const $$ = (s) => [...d.querySelectorAll(s)];
   const text = (s) => ($(s) ? $(s).textContent.replace(/\s+/g, " ").trim() : "");
   const fire = (el, type) => el.dispatchEvent(new w.Event(type, { bubbles: true }));
-  return { w, d, $, $$, text, fire, sent, errors, data };
+  return { w, d, $, $$, text, fire, sent, previews, errors, data };
 }
 
 const tests = [];
@@ -120,7 +124,8 @@ test("dashboard: missing cron entry is called out", async () => {
   const api = JSON.parse(JSON.stringify(API));
   api["/api/status"].schedules = [];
   const p = await loadPage("dashboard", { api });
-  assert.match(p.text("#status-flags"), /No backup.sh entry found/);
+  assert.match(p.text("#status-flags"), /Automatic backups are off/);
+  assert.equal(p.$("#status-flags a").getAttribute("href"), "/selections#schedule");
 });
 
 test("dashboard: action errors are shown", async () => {
@@ -542,6 +547,104 @@ test("cleanup: host refusal and skipped items are reported", async () => {
   await sleep(150);
   assert.match(p2.text("#cu-body"), /Cleanup refused/);
   assert.match(p2.text("#cu-body"), /is its disk mounted/);
+});
+
+/* ------------------------------------------------------------------ Schedule card */
+function scheduleResponder({ previewBody, previewStatus = 200, hostStatus = "applied", hostMessage = 'set to "0 2 * * *" by gozz' } = {}) {
+  let savedId = null;
+  const saved = JSON.parse(JSON.stringify(API["/api/schedule"]));
+  return (m, p) => {
+    if (p === "/api/schedule/preview") {
+      return { status: previewStatus, body: previewBody || API["POST /api/schedule/preview"] };
+    }
+    if (p === "/api/schedule" && m === "PUT") { savedId = "id-1"; return { status: 200, body: { ok: true, id: savedId, expr: "0 2 * * *" } }; }
+    if (p === "/api/schedule" && m === "GET" && savedId) {
+      return { status: 200, body: Object.assign({}, saved, { pending: false, managed: true, enabled: hostStatus === "applied",
+        expr: "0 2 * * *", unmanaged: [], last_status: { id: savedId, status: hostStatus, message: hostMessage } }) };
+    }
+    return null;
+  };
+}
+
+test("schedule: shows that automatic backups are off and lists the old cron line", async () => {
+  const p = await loadPage("selections");
+  assert.equal(p.$("#sch-enabled").checked, false);
+  assert.match(p.text("#sch-notes"), /Automatic backups are off/);
+  assert.match(p.text("#sch-notes"), /comments out these lines/);
+  assert.match(p.text("#sch-notes"), /backup\.sh/);
+  assert.equal(p.$("#sch-kind").value, "daily");
+  assert.match(p.text("#sch-preview"), /Off\./);
+});
+
+test("schedule: the form shows the fields for each kind of schedule", async () => {
+  const p = await loadPage("selections");
+  const shown = () => ["#sch-time-wrap", "#sch-days", "#sch-every-wrap", "#sch-expr-wrap"].filter((s) => !p.$(s).hidden);
+  const set = (k) => { p.$("#sch-kind").value = k; p.fire(p.$("#sch-kind"), "change"); };
+  set("daily"); assert.deepEqual(shown(), ["#sch-time-wrap"]);
+  set("weekdays"); assert.deepEqual(shown(), ["#sch-time-wrap", "#sch-days"]);
+  assert.equal(p.$$("#sch-days input").length, 7);
+  set("hours"); assert.deepEqual(shown(), ["#sch-every-wrap"]);
+  set("advanced"); assert.deepEqual(shown(), ["#sch-expr-wrap"]);
+});
+
+test("schedule: turning it on previews the next runs and saves to the host", async () => {
+  const p = await loadPage("selections", { respond: scheduleResponder() });
+  p.$("#sch-enabled").checked = true; p.fire(p.$("#sch-enabled"), "change");
+  await sleep(400);
+  assert.match(p.text("#sch-preview"), /Daily at 02:00/);
+  assert.match(p.text("#sch-preview"), /Next runs:/);
+  assert.match(p.text("#sch-preview"), /your time/);
+  const pv = p.previews[p.previews.length - 1].body;
+  assert.equal(pv.enabled, true);
+  assert.equal(pv.kind, "daily");
+  assert.equal(pv.time, "02:00");
+  assert.equal(p.$("#sch-save").disabled, false);
+  p.$("#sch-save").click();
+  await sleep(100);
+  const put = p.sent.find((s) => s.method === "PUT" && s.path === "/api/schedule");
+  assert.ok(put, "PUT /api/schedule sent");
+  assert.equal(put.body.enabled, true);
+  assert.equal(put.body.kind, "daily");
+  assert.ok(put.csrf, "carries the CSRF token");
+  assert.match(p.text("#sch-status"), /Applying|Saved/);
+  await sleep(1700);
+  assert.match(p.text("#sch-status"), /✓ Saved/);
+  assert.equal(p.sent.filter((s) => s.path === "/api/config").length, 0, "does not touch config.yaml");
+});
+
+test("schedule: an invalid custom schedule is explained and cannot be saved", async () => {
+  const p = await loadPage("selections", { respond: scheduleResponder({ previewStatus: 422,
+    previewBody: { errors: ["The minute field '61' is outside 0-59"] } }) });
+  p.$("#sch-kind").value = "advanced"; p.fire(p.$("#sch-kind"), "change");
+  p.$("#sch-expr").value = "61 2 * * *"; p.fire(p.$("#sch-expr"), "input");
+  await sleep(400);
+  assert.match(p.text("#sch-preview"), /outside 0-59/);
+  assert.equal(p.$("#sch-save").disabled, true);
+});
+
+test("schedule: a refusal from the host is shown", async () => {
+  const p = await loadPage("selections", { respond: scheduleResponder({ hostStatus: "failed",
+    hostMessage: "refused: crontab rejected the change" }) });
+  p.$("#sch-enabled").checked = true; p.fire(p.$("#sch-enabled"), "change");
+  await sleep(400);
+  p.$("#sch-save").click();
+  await sleep(1900);
+  assert.match(p.text("#sch-preview"), /Not saved: refused: crontab rejected the change/);
+  assert.doesNotMatch(p.text("#sch-status"), /Saved/);
+});
+
+test("schedule: an existing managed schedule opens filled in, and Save stays off until something changes", async () => {
+  const api = JSON.parse(JSON.stringify(API));
+  Object.assign(api["/api/schedule"], { managed: true, enabled: true, expr: "15 3 * * 1,3,5", unmanaged: [],
+    form: { kind: "weekdays", time: "03:15", days: [1, 3, 5], text: "Mon, Wed, Fri at 03:15" } });
+  const pv = { expr: "15 3 * * 1,3,5", form: api["/api/schedule"].form, next_runs: [Date.now() / 1000 + 3600] };
+  const p = await loadPage("selections", { api, respond: scheduleResponder({ previewBody: pv }) });
+  assert.equal(p.$("#sch-enabled").checked, true);
+  assert.equal(p.$("#sch-kind").value, "weekdays");
+  assert.equal(p.$("#sch-time").value, "03:15");
+  assert.deepEqual(p.$$("#sch-days input:checked").map((c) => c.value).sort(), ["1", "3", "5"]);
+  assert.equal(p.text("#sch-notes"), "");
+  assert.equal(p.$("#sch-save").disabled, true, "nothing changed yet");
 });
 
 /* ------------------------------------------------------------------ runner */
