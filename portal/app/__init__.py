@@ -46,8 +46,9 @@ def create_app():
 
     history = History()
     app.extensions["history"] = history
-    threading.Thread(target=_ingest_loop, args=(history,), name="history-ingest", daemon=True).start()
-    filesystems.start_snapshot_thread()
+    if os.environ.get("PORTAL_BACKGROUND", "1") == "1":  # tests turn these off
+        threading.Thread(target=_ingest_loop, args=(history,), name="history-ingest", daemon=True).start()
+        filesystems.start_snapshot_thread()
 
     from .routes import bp
     app.register_blueprint(bp)

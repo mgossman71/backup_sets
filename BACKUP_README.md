@@ -493,3 +493,28 @@ The host re-checks every removal against the **saved** `config.yaml` before dele
 be deselected for that backup entry (or gone from the source), must be a real directory directly inside
 `<destination>/<source folder name>/`, and no backup can be running. The source is never touched.
 Every removal is logged as a `Portal action:` line in the backup log.
+
+## Tests
+
+Run the whole suite before every change goes live:
+```bash
+cd /opt/backup_sets && ./test.sh            # everything (~1 minute)
+./test.sh -k selection                      # only tests whose name matches
+./test.sh tests/shell/test_actions.py       # one file
+```
+`./test.sh` builds a test image (same rsync / jq / yq versions as the server) and runs the tests in a
+container with **no network** and the repository mounted **read-only**. Every test works in its own
+temporary directories, so the real config, flags, logs and disks are never touched. It exits non-zero
+if anything fails.
+
+| Area | File | What it covers |
+|---|---|---|
+| backup.sh | `tests/shell/test_backup.py` | copying, history records, stop / running / fail flags, mount checks, failures, concurrent starts, interrupts, include/exclude selection (odd names, wildcards, nested folders) |
+| Action bridge | `tests/shell/test_actions.py` | run / pause / resume / clear requests, and every safety rule for removing folders from a backup disk |
+| History import | `tests/shell/test_backfill.py` | parsing the old text log |
+| Login | `tests/portal/test_auth.py` | host-account passwords, allowed group, locked/expired accounts, rate limiting, sessions |
+| Config | `tests/portal/test_config_store.py` | reading/writing config.yaml (comments kept), validation, blocked rsync options |
+| API | `tests/portal/test_api.py` | access control and CSRF on every endpoint, status, actions, browsing, history, filesystems, folder sizes, removal requests |
+| Pages | `tests/js/run.js` | the four pages in a simulated browser: buttons, the folder picker, save / conflict / warnings, removal confirmation |
+
+The portal image pins Python 3.12: password checking uses the `crypt` module, which was removed in Python 3.13.

@@ -20,6 +20,7 @@ STATE_DIR="${STATE_DIR:-/var/lib/backup_sets}"
 REQUEST_DIR="${REQUEST_DIR:-$STATE_DIR/requests}"
 REMOVAL_DIR="${REMOVAL_DIR:-$STATE_DIR/removals}"
 CRON_LOG="${CRON_LOG:-/var/log/backup_sets_cron.log}"
+SYSTEMD_RUN="${SYSTEMD_RUN:-systemd-run}"   # overridable for tests
 
 yq_read() { yq -r "$@" < "$CONFIG_FILE" 2>/dev/null; }
 
@@ -119,7 +120,7 @@ handle_remove() {
     removal_status "$id" "running" "Deleting…"
     # Run in its own transient unit: large folders take a while, and this
     # oneshot service must not hold the request queue.
-    systemd-run --quiet --collect --unit="backup-sets-remove-${id:0:12}" \
+    "$SYSTEMD_RUN" --quiet --collect --unit="backup-sets-remove-${id:0:12}" \
         --setenv=R_ID="$id" --setenv=R_TARGET="$real_target" --setenv=R_USER="$R_USER" \
         --setenv=R_SOURCE="$R_SOURCE" --setenv=R_DEST="$R_DEST" --setenv=R_FOLDER="$R_FOLDER" \
         --setenv=LOG_FILE="$LOG_FILE" --setenv=REMOVAL_DIR="$REMOVAL_DIR" \
@@ -151,7 +152,7 @@ for req in "$REQUEST_DIR"/*; do
                 continue
             fi
             log "run requested by $user - starting backup"
-            systemd-run --quiet --collect --unit="backup-sets-portal-$(date +%s)" \
+            "$SYSTEMD_RUN" --quiet --collect --unit="backup-sets-portal-$(date +%s)" \
                 --setenv=BACKUP_TRIGGER=portal --setenv=BACKUP_CONFIG="$CONFIG_FILE" \
                 /bin/bash -c "exec /bin/bash '$BACKUP_DIR/backup.sh' >> '$CRON_LOG' 2>&1"
             ;;

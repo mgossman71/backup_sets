@@ -30,7 +30,7 @@ required_mount_points:
 # Backup mappings
 # Each entry maps a source directory to a destination directory
 # The folder name from the source will be created in the destination
-backups:    
+backups:
   - source: /mnt/SharedVol/Movies
     destination: /mnt/usb_chassis/pool
 
@@ -39,6 +39,11 @@ backups:
 
   - source: /mnt/SharedVol/TV-Shows
     destination: /mnt/usb_chassis/singleusb
+    exclude:
+      - Alex vs ARod
+      - Under the Dome
+      - Why Women Kill
+      - Your Friends & Neighbors
 
 # To add new backups from different sources, add more entries:
 #  - source: /mnt/OtherVol/Photos
