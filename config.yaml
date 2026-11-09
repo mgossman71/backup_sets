@@ -6,6 +6,7 @@ log_file: /var/log/backup_sets.log
 
 # Rsync options (space-separated)
 # -a: archive mode, -v: verbose, --progress: show file-by-file progress, --stats: show statistics
+#rsync_opts: "-av --progress --stats --delete"
 rsync_opts: "-av --progress --stats"
 
 # Flag files
