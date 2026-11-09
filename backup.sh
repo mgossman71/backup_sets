@@ -40,6 +40,7 @@ CURRENT_JOB_DEST=""
 CURRENT_JOB_START=""
 JOBS_DONE=0
 FILTER_FILE=""
+OWN_RUNNING_FLAG=0   # 1 once THIS run has created the running flag
 SELECTION_MODE="all"
 SELECTION_COUNT=0
 
@@ -309,8 +310,10 @@ remove_filter_file() {
 # Cleanup function
 cleanup() {
     remove_filter_file
-    if [ -f "$RUNNING_FLAG" ]; then
+    # Only remove the flag if this run created it - never another run's flag
+    if [ "$OWN_RUNNING_FLAG" -eq 1 ] && [ -f "$RUNNING_FLAG" ]; then
         rm -f "$RUNNING_FLAG"
+        OWN_RUNNING_FLAG=0
         log "Removed running flag"
     fi
 }
@@ -368,8 +371,15 @@ check_running() {
 }
 
 # Create running flag
+# Create running flag atomically (noclobber), so two runs starting at the same
+# moment cannot both proceed.
 set_running_flag() {
-    touch "$RUNNING_FLAG"
+    if ! ( set -o noclobber; : > "$RUNNING_FLAG" ) 2>/dev/null; then
+        log "Backup script is already running (flag exists: $RUNNING_FLAG)"
+        record_run "skipped" "Already running"
+        exit 1
+    fi
+    OWN_RUNNING_FLAG=1
     log "Created running flag: $RUNNING_FLAG"
 }
 
