@@ -494,6 +494,25 @@ be deselected for that backup entry (or gone from the source), must be a real di
 `<destination>/<source folder name>/`, and no backup can be running. The source is never touched.
 Every removal is logged as a `Portal action:` line in the backup log.
 
+### Backup Folder Cleanup
+Backups never delete anything on their own (rsync runs without `--delete`), so files you delete from a
+source stay in its backup. Each backup set on **Backup selections** has a **Backup Folder Cleanup**
+button that removes them:
+
+1. **Compare.** Lists everything in `<destination>/<source folder name>/` that no longer exists in the
+   source, at any depth, with sizes. Nothing is deleted yet. Folders you deselected but that still exist
+   in the source are protected and listed as such.
+2. **Confirm.** Type the backup set's folder name (e.g. `TV-Shows`) to enable **Delete**. If the cleanup
+   would remove more than 25% of the backup, a warning is shown first.
+3. **Delete.** The host (`host/cleanup.py`) re-checks every listed item before deleting it. It only deletes
+   items that still exist in the backup, are still missing from the source, are not protected, and whose
+   parent folders are real folders inside the backup (no symlinks). It refuses the whole cleanup if the
+   source folder is missing or **empty** (usually an unmounted disk), if a backup is running, or if the
+   comparison is more than an hour old.
+
+The button is only enabled for a backup set that is saved with no unsaved changes. Each cleanup is logged
+in the backup log; the full list of deleted paths is kept in `/var/lib/backup_sets/cleanup/<id>.deleted.txt`.
+
 ## Tests
 
 Run the whole suite before every change goes live:
@@ -511,6 +530,8 @@ if anything fails.
 |---|---|---|
 | backup.sh | `tests/shell/test_backup.py` | copying, history records, stop / running / fail flags, mount checks, failures, concurrent starts, interrupts, include/exclude selection (odd names, wildcards, nested folders) |
 | Action bridge | `tests/shell/test_actions.py` | run / pause / resume / clear requests, and every safety rule for removing folders from a backup disk |
+| Cleanup (host) | `tests/shell/test_cleanup.py` | every safety rule of Backup Folder Cleanup |
+| Cleanup (portal) | `tests/portal/test_cleanup_api.py` | the comparison, protected folders, confirmation and refusals |
 | History import | `tests/shell/test_backfill.py` | parsing the old text log |
 | Login | `tests/portal/test_auth.py` | host-account passwords, allowed group, locked/expired accounts, rate limiting, sessions |
 | Config | `tests/portal/test_config_store.py` | reading/writing config.yaml (comments kept), validation, blocked rsync options |

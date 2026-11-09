@@ -11,6 +11,9 @@
 #       Deletes <destination>/<basename source>/<folder> from a backup disk.
 #       Re-validated here against the SAVED config.yaml: the folder must be
 #       deselected for that backup entry (or no longer exist in the source).
+#   cleanup-<32 hex>                     content: JSON {user}
+#       Backup Folder Cleanup: runs host/cleanup.py on the plan
+#       $STATE_DIR/cleanup/<id>.json, which re-validates every path.
 ################################################################################
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -164,6 +167,22 @@ for req in "$REQUEST_DIR"/*; do
             ;;
         clear_fail)
             valid_path "$FAIL_FLAG" && rm -f "$FAIL_FLAG" && log "fail flag cleared by $user ($FAIL_FLAG)"
+            ;;
+        cleanup-*)
+            if [[ "$action" =~ ^cleanup-([0-9a-f]{32})$ ]]; then
+                id="${BASH_REMATCH[1]}"
+                c_user=$(jq -r '.user // "unknown"' <<< "$content" 2>/dev/null)
+                [[ "$c_user" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || c_user="unknown"
+                mkdir -p "$STATE_DIR/cleanup"
+                log "cleanup $id requested by $c_user"
+                # cleanup.py re-validates the plan and every path before deleting anything
+                "$SYSTEMD_RUN" --quiet --collect --unit="backup-sets-cleanup-${id:0:12}" \
+                    /usr/bin/env python3 -I "$SCRIPT_DIR/cleanup.py" \
+                    "$STATE_DIR/cleanup/$id.json" "$STATE_DIR/cleanup/$id.status.json" \
+                    "$CONFIG_FILE" "$LOG_FILE" "$c_user"
+            else
+                log "ignored malformed request '$action'"
+            fi
             ;;
         remove-*)
             if [[ "$action" =~ ^remove-([0-9a-f]{32})$ ]]; then

@@ -12,6 +12,7 @@ from .settings import BROWSE_ROOTS, CRONTAB_FILE, REQUEST_DIR, STATE_DIR, hostpa
 
 ACTIONS = {"run", "stop_on", "stop_off", "clear_fail"}
 REMOVE_RE = re.compile(r"^remove-([0-9a-f]{32})$")
+CLEANUP_RE = re.compile(r"^cleanup-([0-9a-f]{32})$")
 REMOVAL_DIR = os.path.join(STATE_DIR, "removals")
 PROGRESS_RE = re.compile(r"^\s*[\d,]+\s+\d{1,3}%\s")
 STATS_RE = re.compile(r"^(Number of |Total |Literal data|Matched data|File list |sent |total size )")
@@ -112,7 +113,7 @@ def current_activity(tail):
 
 def request_action(name, user, payload=None):
     """Drop a request file for the host bridge (atomic: written elsewhere, then renamed in)."""
-    if name not in ACTIONS and not REMOVE_RE.match(name):
+    if name not in ACTIONS and not REMOVE_RE.match(name) and not CLEANUP_RE.match(name):
         raise ValueError("unknown action")
     os.makedirs(REQUEST_DIR, exist_ok=True)
     tmp = os.path.join(STATE_DIR, f".req-{name}-{os.getpid()}-{time.time_ns()}")

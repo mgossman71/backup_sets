@@ -409,6 +409,141 @@ test("selections: add a backup using the folder browser", async () => {
   assert.equal(p.$("#save").disabled, false);
 });
 
+/* ------------------------------------------------------------------ Backup Folder Cleanup */
+const PLAN = {
+  id: "c".repeat(32), source: "/mnt/src/TV", destination: "/mnt/disk1", dest_folder: "/mnt/disk1/TV",
+  confirm_name: "TV", protected: ["Kept Show"], total_items: 3, total_size: 380, total_files: 3,
+  backup_size: 10000, share_of_backup: 0.038, items_truncated: false,
+  items: [{ path: "Big Show/s1/e3-old.mkv", type: "file", size: 123, files: 1 },
+          { path: "Gone Show", type: "folder", size: 250, files: 1 },
+          { path: '<img src=x onerror="window.__xss=2">', type: "file", size: 7, files: 1 }],
+};
+function cleanupResponder(plan, finalStatus, extra) {
+  const calls = { plan: 0, run: 0, status: 0 };
+  return {
+    calls,
+    respond: (m, p, body) => {
+      if (extra) { const r = extra(m, p, body); if (r) return r; }
+      if (p === "/api/cleanup/plan") { calls.plan++; return { status: 200, body: plan }; }
+      if (p === "/api/cleanup/run") { calls.run++; return { status: 200, body: { ok: true, id: plan.id } }; }
+      if (p.startsWith("/api/cleanup/")) {
+        calls.status++;
+        return { status: 200, body: finalStatus || { status: "done", deleted: 3, skipped: 0, freed: 380, message: "Deleted 3" } };
+      }
+      return null;
+    },
+  };
+}
+const cleanupBtn = (p, i = 0) => p.$$(".folders-line button").filter((b) => b.textContent === "Backup Folder Cleanup")[i];
+
+test("cleanup: one button per saved backup set, disabled while that set has unsaved changes", async () => {
+  const p = await loadPage("selections");
+  assert.equal(p.$$(".folders-line button").filter((b) => b.textContent === "Backup Folder Cleanup").length, 2);
+  assert.equal(cleanupBtn(p, 0).disabled, false);
+  const src = p.$$(".sel-row")[0].querySelector("input");
+  src.value = "/mnt/src/Other"; p.fire(src, "input");
+  assert.equal(cleanupBtn(p, 0).disabled, true, "edited path");
+  assert.equal(cleanupBtn(p, 1).disabled, false, "other set unaffected");
+  p.$("#revert").click();
+  await openPicker(p, 0);
+  uncheck(p, "Big Show");
+  p.$("#pk-apply").click();
+  assert.equal(cleanupBtn(p, 0).disabled, true, "changed selection");
+  p.$("#add-backup").click();
+  assert.equal(p.$$(".folders-line button").filter((b) => b.textContent === "Backup Folder Cleanup").pop().disabled, true, "new set");
+});
+
+test("cleanup: shows what would be deleted; Delete needs the exact folder name", async () => {
+  const r = cleanupResponder(PLAN);
+  const p = await loadPage("selections", { respond: r.respond });
+  cleanupBtn(p).click();
+  await sleep(100);
+  assert.equal(p.$("#cleanup").hidden, false);
+  assert.equal(r.calls.plan, 1);
+  assert.equal(p.sent[0].path, "/api/cleanup/plan");
+  assert.deepEqual(p.sent[0].body, { source: "/mnt/src/TV", destination: "/mnt/disk1" });
+  assert.match(p.text("#cu-body"), /Items to delete ?3/);
+  assert.match(p.text("#cu-body"), /Gone Show\//);
+  assert.match(p.text("#cu-body"), /Kept Show/, "protected folders are named");
+  assert.equal(p.w.__xss, undefined, "paths are text, never HTML");
+  assert.equal(p.$("#cu-confirm").hidden, false);
+  assert.equal(p.text("#cu-name"), "TV");
+  assert.match(p.$("#cu-go").textContent, /Delete 3 items/);
+  const input = p.$("#cu-input");
+  for (const wrong of ["", "tv", "TV ", "T", "TV-Shows"]) {
+    input.value = wrong; p.fire(input, "input");
+    assert.equal(p.$("#cu-go").disabled, true, `"${wrong}" must not enable delete`);
+  }
+  assert.equal(r.calls.run, 0);
+  input.value = "TV"; p.fire(input, "input");
+  assert.equal(p.$("#cu-go").disabled, false);
+  p.$("#cu-go").click();
+  await sleep(150);
+  const run = p.sent.find((s) => s.path === "/api/cleanup/run");
+  assert.deepEqual(run.body, { plan_id: PLAN.id, confirm: "TV" });
+  assert.match(p.text("#cu-body"), /Cleanup finished/);
+  assert.match(p.text("#cu-body"), /Deleted 3 items, freed 380 B/);
+});
+
+test("cleanup: closing before confirming deletes nothing", async () => {
+  const r = cleanupResponder(PLAN);
+  const p = await loadPage("selections", { respond: r.respond });
+  cleanupBtn(p).click();
+  await sleep(100);
+  p.$("#cu-close").click();
+  assert.equal(p.$("#cleanup").hidden, true);
+  assert.equal(r.calls.run, 0);
+});
+
+test("cleanup: large share of the backup gets a prominent warning", async () => {
+  const big = Object.assign({}, PLAN, { share_of_backup: 0.6 });
+  const p = await loadPage("selections", { respond: cleanupResponder(big).respond });
+  cleanupBtn(p).click();
+  await sleep(100);
+  assert.match(p.text("#cu-body"), /delete 60% of the backup/);
+});
+
+test("cleanup: in-sync backup says so and offers no Delete", async () => {
+  const none = Object.assign({}, PLAN, { items: [], total_items: 0, total_size: 0, total_files: 0 });
+  const p = await loadPage("selections", { respond: cleanupResponder(none).respond });
+  cleanupBtn(p).click();
+  await sleep(100);
+  assert.match(p.text("#cu-body"), /Nothing to clean up/);
+  assert.equal(p.$("#cu-confirm").hidden, true);
+});
+
+test("cleanup: refusal from the comparison is shown, no Delete", async () => {
+  const p = await loadPage("selections", { respond: (m, path) => path === "/api/cleanup/plan"
+    ? { status: 409, body: { error: "The source folder /mnt/src/TV is empty." } } : null });
+  cleanupBtn(p).click();
+  await sleep(100);
+  assert.match(p.text("#cu-body"), /is empty/);
+  assert.equal(p.$("#cu-confirm").hidden, true);
+});
+
+test("cleanup: host refusal and skipped items are reported", async () => {
+  const st = { status: "done", deleted: 2, skipped: 1, freed: 257, message: "x",
+               skipped_items: [{ path: "Gone Show", reason: "exists in the source again" }] };
+  const p = await loadPage("selections", { respond: cleanupResponder(PLAN, st).respond });
+  cleanupBtn(p).click();
+  await sleep(100);
+  p.$("#cu-input").value = "TV"; p.fire(p.$("#cu-input"), "input");
+  p.$("#cu-go").click();
+  await sleep(150);
+  assert.match(p.text("#cu-body"), /1 item\(s\) were skipped and kept/);
+  assert.match(p.text("#cu-body"), /exists in the source again/);
+
+  const p2 = await loadPage("selections", { respond: cleanupResponder(PLAN,
+    { status: "failed", message: "source folder /mnt/src/TV is empty - is its disk mounted?", deleted: 0, skipped: 0 }).respond });
+  cleanupBtn(p2).click();
+  await sleep(100);
+  p2.$("#cu-input").value = "TV"; p2.fire(p2.$("#cu-input"), "input");
+  p2.$("#cu-go").click();
+  await sleep(150);
+  assert.match(p2.text("#cu-body"), /Cleanup refused/);
+  assert.match(p2.text("#cu-body"), /is its disk mounted/);
+});
+
 /* ------------------------------------------------------------------ runner */
 (async () => {
   let failed = 0;

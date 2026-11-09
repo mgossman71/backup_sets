@@ -90,7 +90,12 @@
         clear(sel).append(el("span", { class: "sel-summary" + (b.mode === "all" ? "" : " active"), text: selSummary(b) }));
         const btn = el("button", { type: "button", text: "Choose folders…", disabled: !b.source.trim().startsWith("/") || !b.destination.trim().startsWith("/") });
         btn.addEventListener("click", () => picker.open(b, () => { renderSel(); updateDirty(); scheduleValidate(); }));
-        sel.append(btn);
+        const saved = savedUnchanged(b);
+        const cu = el("button", { type: "button", class: "danger", text: "Backup Folder Cleanup", disabled: !saved,
+          title: saved ? "Delete from the backup everything that no longer exists in the source"
+                       : "Save your changes to this backup set first" });
+        cu.addEventListener("click", () => cleanupDialog.open(b));
+        sel.append(btn, cu);
       };
       renderSel();
       row.append(el("div", { class: "idx", text: String(i + 1) }), left, right, el("div", { class: "ops" }, up, down, del));
@@ -259,8 +264,16 @@
     return "Folders: all";
   }
 
+  /* Cleanup works on the saved config.yaml, so it is only offered for saved, unchanged sets. */
+  function savedUnchanged(b) {
+    const m = b.meta;
+    return !!m && m.source === b.source.trim() && m.destination === b.destination.trim() &&
+      JSON.stringify(selKey(b)) === JSON.stringify(selKey(m));
+  }
+
   /* ---------- folder picker modal ---------- */
   const picker = createFolderPicker();
+  const cleanupDialog = createCleanupDialog();
 
   load();
 })();

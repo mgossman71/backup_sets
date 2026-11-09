@@ -9,7 +9,7 @@ from flask import (Blueprint, abort, current_app, jsonify, redirect, render_temp
 
 import os
 
-from . import auth, config_store, filesystems, folders, status
+from . import auth, cleanup, config_store, filesystems, folders, status
 from .settings import BROWSE_ROOTS, hostpath
 
 bp = Blueprint("portal", __name__)
@@ -299,6 +299,66 @@ def api_remove_dest_folder():
     folders.invalidate(target)
     print(f"removal of {target} requested by {session['user']} ({rid})", flush=True)
     return jsonify(ok=True, id=rid)
+
+
+@bp.post("/api/cleanup/plan")
+@login_required(api=True)
+def api_cleanup_plan():
+    """Backup Folder Cleanup step 1: compare the backup folder with the source (read-only)."""
+    body = request.get_json(silent=True) or {}
+    source = config_store._norm(body.get("source", ""))
+    destination = config_store._norm(body.get("destination", ""))
+    saved = _saved_entry(_cfg(), source, destination)
+    if not saved:
+        return jsonify(error="That backup set isn't saved in config.yaml yet - save first"), 409
+    try:
+        p = cleanup.plan(saved)
+    except cleanup.CleanupError as e:
+        return jsonify(error=str(e)), 409
+    print(f"cleanup plan {p['id']} for {p['dest_folder']} by {session['user']}: "
+          f"{p['total_items']} items, {p['total_size']} bytes", flush=True)
+    return jsonify(cleanup.summary(p))
+
+
+@bp.post("/api/cleanup/run")
+@login_required(api=True)
+def api_cleanup_run():
+    """Step 2: after the user typed the backup set's folder name, hand the plan to the host."""
+    body = request.get_json(silent=True) or {}
+    try:
+        p = cleanup.load_plan(str(body.get("plan_id", "")))
+    except cleanup.CleanupError as e:
+        return jsonify(error=str(e)), 404
+    if body.get("confirm") != p["confirm_name"]:
+        return jsonify(error=f"Type {p['confirm_name']} exactly to confirm"), 400
+    if time.time() - p["created"] > cleanup.PLAN_MAX_AGE:
+        return jsonify(error="This comparison is more than an hour old - run it again"), 409
+    if not p["items"]:
+        return jsonify(error="Nothing to clean up"), 409
+    cfg = _cfg()
+    if not _saved_entry(cfg, p["source"], p["destination"]):
+        return jsonify(error="That backup set is no longer in config.yaml"), 409
+    if status.flags(cfg)["running"]:
+        return jsonify(error="A backup is running - try again when it finishes"), 409
+    if cleanup.status(p["id"]) or f"cleanup-{p['id']}" in status.pending_actions():
+        return jsonify(error="This cleanup was already started"), 409
+    status.request_action(f"cleanup-{p['id']}", session["user"], {})
+    print(f"cleanup {p['id']} of {p['dest_folder']} confirmed by {session['user']}", flush=True)
+    return jsonify(ok=True, id=p["id"])
+
+
+@bp.get("/api/cleanup/<plan_id>")
+@login_required(api=True)
+def api_cleanup_status(plan_id):
+    try:
+        p = cleanup.load_plan(plan_id)
+    except cleanup.CleanupError as e:
+        return jsonify(error=str(e)), 404
+    st = cleanup.status(plan_id)
+    if st is None:
+        st = ({"status": "queued", "message": "Waiting for the server"}
+              if f"cleanup-{plan_id}" in status.pending_actions() else {"status": "planned"})
+    return jsonify(dict(st, id=plan_id, total_items=p["total_items"], total_size=p["total_size"]))
 
 
 @bp.get("/api/removals")
