@@ -4,12 +4,13 @@
   let model = null;           // editable copy
   let validateTimer = null;
 
-  const snapshot = (m) => JSON.stringify({ b: m.backups.map(b => [b.source.trim(), b.destination.trim()]), m: m.mounts.map(x => x.trim()).filter(Boolean), r: m.rsync_opts.trim().split(/\s+/).join(" ") });
+  const selKey = (b) => b.mode === "all" ? ["all"] : [b.mode, [...b.folders].sort(), b.mode === "include" ? b.include_root_files : true];
+  const snapshot = (m) => JSON.stringify({ b: m.backups.map(b => [b.source.trim(), b.destination.trim(), selKey(b)]), m: m.mounts.map(x => x.trim()).filter(Boolean), r: m.rsync_opts.trim().split(/\s+/).join(" ") });
   const isDirty = () => server && model && snapshot(model) !== snapshot(fromServer(server));
 
   function fromServer(cfg) {
     return {
-      backups: cfg.backups.map(b => ({ source: b.source, destination: b.destination, meta: b })),
+      backups: cfg.backups.map(b => ({ source: b.source, destination: b.destination, mode: b.mode, folders: [...b.folders], include_root_files: b.include_root_files, meta: b })),
       mounts: [...cfg.required_mount_points],
       rsync_opts: cfg.rsync_opts || "",
     };
@@ -83,9 +84,18 @@
       down.addEventListener("click", () => { [model.backups[i + 1], model.backups[i]] = [model.backups[i], model.backups[i + 1]]; render(); scheduleValidate(); });
       del.addEventListener("click", () => { model.backups.splice(i, 1); render(); scheduleValidate(); });
       const left = el("div", {}, src, meta);
-      row.append(el("div", { class: "idx", text: String(i + 1) }), left, dst, el("div", { class: "ops" }, up, down, del));
+      const sel = el("div", { class: "folders-line" });
+      const right = el("div", {}, dst, sel);
+      const renderSel = () => {
+        clear(sel).append(el("span", { class: "sel-summary" + (b.mode === "all" ? "" : " active"), text: selSummary(b) }));
+        const btn = el("button", { type: "button", text: "Choose folders…", disabled: !b.source.trim().startsWith("/") || !b.destination.trim().startsWith("/") });
+        btn.addEventListener("click", () => picker.open(b, () => { renderSel(); updateDirty(); scheduleValidate(); }));
+        sel.append(btn);
+      };
+      renderSel();
+      row.append(el("div", { class: "idx", text: String(i + 1) }), left, right, el("div", { class: "ops" }, up, down, del));
       box.append(row);
-      function changed() { const n = rowMeta(b); left.replaceChild(n, left.lastChild); updateDirty(); scheduleValidate(); }
+      function changed() { const n = rowMeta(b); left.replaceChild(n, left.lastChild); renderSel(); updateDirty(); scheduleValidate(); }
     });
   }
 
@@ -113,7 +123,7 @@
   function payload(force) {
     return {
       version: server.version,
-      backups: model.backups.map(b => ({ source: b.source.trim(), destination: b.destination.trim() })),
+      backups: model.backups.map(b => ({ source: b.source.trim(), destination: b.destination.trim(), mode: b.mode, folders: b.folders, include_root_files: b.include_root_files })),
       required_mount_points: model.mounts.map(m => m.trim()).filter(Boolean),
       rsync_opts: model.rsync_opts,
       force: !!force,
@@ -171,7 +181,7 @@
   }
 
   $("#add-backup").addEventListener("click", () => {
-    model.backups.push({ source: "", destination: "", meta: null });
+    model.backups.push({ source: "", destination: "", mode: "all", folders: [], include_root_files: true, meta: null });
     render();
     const inputs = document.querySelectorAll("#backups .sel-row:last-child input");
     if (inputs[0]) inputs[0].focus();
@@ -241,6 +251,16 @@
       },
     };
   })();
+
+  function selSummary(b) {
+    const n = b.folders.length;
+    if (b.mode === "exclude") return "Folders: all except " + n + " (" + b.folders.slice(0, 3).join(", ") + (n > 3 ? ", …" : "") + ")";
+    if (b.mode === "include") return "Folders: only " + n + " selected" + (b.include_root_files ? "" : ", no loose files");
+    return "Folders: all";
+  }
+
+  /* ---------- folder picker modal ---------- */
+  const picker = createFolderPicker();
 
   load();
 })();

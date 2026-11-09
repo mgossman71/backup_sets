@@ -53,5 +53,59 @@
     </footer>
   </div>
 </div>
+<div class="modal-backdrop" id="picker" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="pk-h">
+    <header><div><h2 id="pk-h">Choose folders</h2><div class="small muted mono" id="pk-sub"></div></div></header>
+    <div class="pk-controls">
+      <div class="seg" id="pk-mode" role="group" aria-label="Selection mode">
+        <button type="button" data-mode="exclude">Everything except unchecked</button>
+        <button type="button" data-mode="include">Only checked folders</button>
+      </div>
+      <p class="small ink2" id="pk-mode-help"></p>
+      <label class="check small" id="pk-root-wrap"><input type="checkbox" id="pk-root"> <span id="pk-root-label"></span></label>
+      <div class="row">
+        <input type="text" id="pk-filter" placeholder="Filter folders…" aria-label="Filter folders">
+        <select id="pk-sort" aria-label="Sort"><option value="name">Sort by name</option><option value="size">Sort by size</option></select>
+        <button type="button" id="pk-all">Check all</button>
+        <button type="button" id="pk-none">Uncheck all</button>
+        <span class="spacer"></span>
+        <button type="button" id="pk-refresh">Refresh sizes</button>
+      </div>
+      <div class="small muted" id="pk-status"></div>
+    </div>
+    <div class="body">
+      <div class="table-wrap">
+        <table class="pk-table">
+          <thead><tr><th>Folder</th><th class="num">Size in source</th><th class="num">On backup disk</th><th>Status</th></tr></thead>
+          <tbody id="pk-rows"></tbody>
+        </table>
+      </div>
+      <div id="pk-orphans" class="pk-orphans"></div>
+    </div>
+    <div class="pk-fit" id="pk-fit" aria-live="polite"></div>
+    <footer>
+      <button type="button" id="pk-cancel">Cancel</button>
+      <button type="button" class="primary" id="pk-apply">Apply selection</button>
+    </footer>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="pk-confirm" hidden>
+  <div class="modal narrow" role="alertdialog" aria-modal="true" aria-labelledby="pkc-h">
+    <header><h2 id="pkc-h">Remove from backup disk?</h2></header>
+    <div class="body pad">
+      <p id="pkc-text"></p>
+      <label class="confirm-label">Type <b id="pkc-name" class="mono"></b> to confirm
+        <input type="text" id="pkc-input" class="path" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <footer>
+      <button type="button" id="pkc-cancel">Cancel</button>
+      <button type="button" class="danger-solid" id="pkc-go" disabled>Delete backup copy</button>
+    </footer>
+  </div>
+</div>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='selections.js') }}?v={{ asset_v }}"></script>{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='folderpicker.js') }}?v={{ asset_v }}"></script>
+<script src="{{ url_for('static', filename='selections.js') }}?v={{ asset_v }}"></script>
+{% endblock %}

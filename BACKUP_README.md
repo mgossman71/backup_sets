@@ -451,3 +451,45 @@ The portal indexes both files into `/var/lib/backup_sets/portal.db`.
 - Portal logs: `docker logs backup-portal`
 - Buttons say "Requests are still waiting": check `systemctl status backup-portal-actions.path`
 - Action audit trail: lines starting with `Portal action:` in the backup log
+
+## Choosing Which Folders Get Backed Up
+
+Each backup entry can be limited to some of its top-level folders, for example individual
+shows under TV-Shows. On the portal's **Backup selections** page, click **Choose folders…** on an entry.
+The picker lists every top-level folder with its size in the source and on the backup disk, and shows
+whether the selection fits in the destination's free space.
+
+Two modes:
+- **Everything except unchecked** (`exclude:`). New folders added to the source later are backed up automatically.
+- **Only checked folders** (`include:`). New folders are not backed up until you check them. Loose files at the
+  top level are copied too unless `include_root_files: false`.
+
+In `config.yaml`:
+```yaml
+backups:
+  - source: /mnt/SharedVol/TV-Shows
+    destination: /mnt/usb_chassis/singleusb
+    exclude:
+      - Chicago Fire
+      - Gossip Girl
+
+  - source: /mnt/SharedVol/Data
+    destination: /mnt/usb_chassis/singleusb
+    include:
+      - BusinessDocs
+      - BOOKS
+    include_root_files: false
+```
+An entry with neither key backs up everything. Using both keys on one entry is an error.
+`backup.sh` turns the list into an rsync filter (`--filter="merge …"`), anchored to the top level, so a
+nested folder with the same name is not affected.
+
+### Freeing space on the backup disk
+Deselecting a folder only stops future copying. The existing copy stays on the backup disk. To delete it,
+open the picker again after saving and click **Remove copy** next to the folder, then type the folder name to confirm.
+Folders that are on the backup disk but no longer in the source are listed too, and can be removed the same way.
+
+The host re-checks every removal against the **saved** `config.yaml` before deleting anything. The folder must
+be deselected for that backup entry (or gone from the source), must be a real directory directly inside
+`<destination>/<source folder name>/`, and no backup can be running. The source is never touched.
+Every removal is logged as a `Portal action:` line in the backup log.
