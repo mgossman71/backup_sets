@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from werkzeug.exceptions import HTTPException
 from flask import (Blueprint, abort, current_app, jsonify, redirect, render_template, request,
+                   send_from_directory,
                    session, url_for)
 
 import json
@@ -95,6 +96,13 @@ def _cfg():
 
 
 # ------------------------------------------------------------------ auth
+@bp.get("/favicon.ico")
+def favicon():
+    """Browsers ask for /favicon.ico on their own (e.g. for bookmarks); serve the PNG icon."""
+    return send_from_directory(current_app.static_folder, "favicon-32.png", mimetype="image/png",
+                               max_age=86400)
+
+
 @bp.get("/healthz")
 def healthz():
     return "ok"

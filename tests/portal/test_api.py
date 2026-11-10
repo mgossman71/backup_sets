@@ -481,3 +481,28 @@ def test_running_flag_of_live_backup_is_running(authed):
 
 def test_history_status_filter_accepts_stopped(authed):
     assert authed.get("/api/history/runs?status=stopped").status_code == 200
+
+
+# --------------------------------------------------------------------------- browser tab icon
+@pytest.mark.parametrize("url", ["/login"] + PAGES)
+def test_every_page_links_the_tab_icon(authed, url):
+    html = (authed.get(url) if url != "/login" else authed.application.test_client().get(url)).get_data(as_text=True)
+    assert 'rel="icon" href="/static/favicon.svg' in html and 'type="image/svg+xml"' in html
+    assert 'rel="icon" href="/static/favicon-32.png' in html
+    assert 'rel="apple-touch-icon" href="/static/apple-touch-icon.png' in html
+    assert 'class="brand-mark" src="/static/favicon.svg' in html
+
+
+@pytest.mark.parametrize("path,mime", [("/static/favicon.svg", "image/svg+xml"), ("/static/favicon-32.png", "image/png"),
+                                       ("/static/apple-touch-icon.png", "image/png"), ("/favicon.ico", "image/png")])
+def test_icon_files_are_served_without_login(client, path, mime):
+    r = client.get(path)
+    assert r.status_code == 200 and r.mimetype == mime and len(r.data) > 500
+
+
+def test_png_icons_have_the_right_sizes(client):
+    import struct
+    for path, size in [("/static/favicon-32.png", 32), ("/static/apple-touch-icon.png", 180)]:
+        data = client.get(path).data
+        assert data[:8] == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack(">II", data[16:24]) == (size, size)

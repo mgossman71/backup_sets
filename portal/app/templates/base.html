@@ -6,10 +6,14 @@
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>{% block title %}{% endblock %} · Backup Sets</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ asset_v }}">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}?v={{ asset_v }}" type="image/svg+xml">
+  <link rel="icon" href="{{ url_for('static', filename='favicon-32.png') }}?v={{ asset_v }}" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}?v={{ asset_v }}">
+  <meta name="theme-color" content="#2a78d6">
 </head>
 <body data-page="{{ page }}">
   <header class="topbar">
-    <a class="brand" href="{{ url_for('portal.dashboard') }}"><span class="brand-mark" aria-hidden="true"></span>Backup Sets</a>
+    <a class="brand" href="{{ url_for('portal.dashboard') }}"><img class="brand-mark" src="{{ url_for('static', filename='favicon.svg') }}?v={{ asset_v }}" alt="" width="20" height="20">Backup Sets</a>
     <nav aria-label="Main">
       <a href="{{ url_for('portal.dashboard') }}" {% if page == 'dashboard' %}aria-current="page"{% endif %}>Dashboard</a>
       <a href="{{ url_for('portal.selections') }}" {% if page == 'selections' %}aria-current="page"{% endif %}>Backup selections</a>

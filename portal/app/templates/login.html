@@ -5,11 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sign in · Backup Sets</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ asset_v }}">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}?v={{ asset_v }}" type="image/svg+xml">
+  <link rel="icon" href="{{ url_for('static', filename='favicon-32.png') }}?v={{ asset_v }}" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}?v={{ asset_v }}">
+  <meta name="theme-color" content="#2a78d6">
 </head>
 <body>
   <div class="login-wrap">
     <div class="card login-card">
-      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Backup Sets</div>
+      <div class="brand"><img class="brand-mark" src="{{ url_for('static', filename='favicon.svg') }}?v={{ asset_v }}" alt="" width="20" height="20">Backup Sets</div>
       <p class="muted small">Sign in with your server account.</p>
       {% if error %}<div class="msg error" role="alert">{{ error }}</div>{% endif %}
       <form method="post">
