@@ -122,11 +122,19 @@ stop_flag: /mnt/.backup_b_stop
 # ... other settings and backups ...
 ```
 
-The script reads `config.yaml` from its own directory by default. To use a different config file, either copy/symlink the script to a different directory alongside its own config, or modify `CONFIG_FILE` at the top of `backup.sh`.
+The script reads `config.yaml` from its own directory by default. To use a different config file, set
+`BACKUP_CONFIG`, e.g. `BACKUP_CONFIG=/opt/backup_sets/config_set_b.yaml /opt/backup_sets/backup.sh`.
 
 ### Automated Execution (Crontab)
 
-Run daily at 2 AM:
+**Recommended: set the schedule in the portal** (Backup selections → **Schedule**, see *Scheduling* below).
+It manages one marked block in root's crontab and shows the next runs in the server's time zone.
+
+If you add a line by hand instead, use **only one** of the two. When you save a schedule in the portal,
+any active `backup.sh` line outside its block is commented out (prefixed `#[moved to portal schedule]`), so
+backups never run twice. (A second run at the same time would be skipped as "already running" anyway.)
+
+To add it by hand, run daily at 2 AM:
 ```bash
 sudo crontab -e
 ```
@@ -551,7 +559,7 @@ in the backup log; the full list of deleted paths is kept in `/var/lib/backup_se
 
 Run the whole suite before every change goes live:
 ```bash
-cd /opt/backup_sets && ./test.sh            # everything (~1 minute)
+cd /opt/backup_sets && ./test.sh            # everything (~2 minutes, 564 tests)
 ./test.sh -k selection                      # only tests whose name matches
 ./test.sh tests/shell/test_actions.py       # one file
 ```
