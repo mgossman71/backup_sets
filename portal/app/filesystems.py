@@ -10,7 +10,16 @@ from .settings import FS_SNAPSHOT_INTERVAL, hostpath
 REAL_FS = {"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "vfat", "exfat", "ntfs",
            "ntfs3", "fuseblk", "fuse.mergerfs", "nfs", "nfs4", "cifs", "smb3"}
 SKIP_PREFIXES = ("/proc", "/sys", "/run", "/snap", "/var/lib/docker", "/dev")
-_pool = ThreadPoolExecutor(max_workers=4)
+# statvfs on a hung network/FUSE mount blocks in the kernel and can't be cancelled, so:
+#  - results are cached briefly (one measurement serves every caller in a request),
+#  - a mount whose previous statvfs is still stuck is reported "not responding" without
+#    tying up another thread, and the pool is large enough for several hung mounts.
+_pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="statvfs")
+CACHE_SECONDS = 30
+STATVFS_TIMEOUT = 3
+_inflight = {}  # mount -> Future of a statvfs that may still be stuck
+_cache = {"ts": 0.0, "data": None}
+_cache_lock = threading.Lock()
 
 
 def _unescape(s):
@@ -43,20 +52,45 @@ def _statvfs(mp):
             "inodes_pct": round(ipct, 1) if ipct is not None else None}
 
 
-def usage():
+def usage(max_age=CACHE_SECONDS):
+    """Size/used/free of every real filesystem. Callers get their own copies."""
+    with _cache_lock:
+        if _cache["data"] is None or time.time() - _cache["ts"] >= max_age:
+            _cache["data"] = _measure()
+            _cache["ts"] = time.time()
+        return [dict(e) for e in _cache["data"]]
+
+
+def _measure():
+    started = {}
     out = []
     for dev, mp, fstype in mounts():
         entry = {"device": dev, "mount": mp, "fstype": fstype}
+        prev = _inflight.get(mp)
+        if prev is not None and not prev.done():
+            entry.update(ok=False, error="not responding")  # still stuck from last time
+        else:
+            started[mp] = _inflight[mp] = _pool.submit(_statvfs, mp)
+        out.append(entry)
+    deadline = time.time() + STATVFS_TIMEOUT  # one deadline for all mounts, not 3 s each
+    for entry in out:
+        fut = started.get(entry["mount"])
+        if fut is None:
+            continue
         try:
-            entry.update(_pool.submit(_statvfs, mp).result(timeout=3))
+            entry.update(fut.result(timeout=max(0.0, deadline - time.time())))
             entry["ok"] = True
         except FutTimeout:
             entry.update(ok=False, error="not responding")
         except OSError as e:
             entry.update(ok=False, error=str(e))
-        out.append(entry)
     out.sort(key=lambda e: e["mount"])
     return out
+
+
+def reset_cache():
+    with _cache_lock:
+        _cache["data"] = None
 
 
 def mount_for(path, fs_list):
@@ -81,11 +115,15 @@ def level(pct):
 
 
 # ------------------------------------------------------------- snapshots
+SNAPSHOT_RETENTION_DAYS = 730
+
+
 def snapshot():
     ts = time.time()
-    rows = [(ts, e["mount"], e["size"], e["used"], e["avail"]) for e in usage() if e.get("ok")]
+    rows = [(ts, e["mount"], e["size"], e["used"], e["avail"]) for e in usage(max_age=0) if e.get("ok")]
     with connect() as conn:
         conn.executemany("INSERT INTO fs_snapshots(ts, mount, size, used, avail) VALUES(?,?,?,?,?)", rows)
+        conn.execute("DELETE FROM fs_snapshots WHERE ts < ?", (ts - SNAPSHOT_RETENTION_DAYS * 86400,))
 
 
 def _snapshot_loop():

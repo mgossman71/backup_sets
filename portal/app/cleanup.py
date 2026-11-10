@@ -69,7 +69,29 @@ def _top_dirs(path):
         return [e.name for e in it if e.is_dir(follow_symlinks=False)]
 
 
-def plan(entry, deadline_s=120):
+PLAN_RETENTION_DAYS = 30
+
+
+def prune_old_plans(now=None):
+    """Delete cleanup plans, statuses and deleted-path lists older than PLAN_RETENTION_DAYS."""
+    cutoff = (now or time.time()) - PLAN_RETENTION_DAYS * 86400
+    try:
+        names = os.listdir(PLAN_DIR)
+    except FileNotFoundError:
+        return 0
+    removed = 0
+    for n in names:
+        path = os.path.join(PLAN_DIR, n)
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                os.unlink(path)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def plan(entry, deadline_s=60):
     """Compare a saved backup entry's folder with its source. Returns the plan dict."""
     source, destination = entry["source"], entry["destination"]
     src_h = hostpath(source)
@@ -130,6 +152,7 @@ def plan(entry, deadline_s=120):
         "share_of_backup": (total / backup_size) if backup_size else 0,
     }
     os.makedirs(PLAN_DIR, exist_ok=True)
+    prune_old_plans()
     tmp = os.path.join(PLAN_DIR, f".{p['id']}.tmp")
     with open(tmp, "w") as f:
         json.dump(p, f)

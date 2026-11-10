@@ -32,7 +32,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "portal"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import fakehost  # noqa: E402
-from app import auth, create_app, folders  # noqa: E402
+from app import auth, create_app, filesystems, folders  # noqa: E402
 
 
 @pytest.fixture
@@ -45,6 +45,7 @@ def host():
     CONFIG.write_text(fakehost.CONFIG_TEMPLATE)
     auth._failures.clear()
     folders._schema_done = False
+    filesystems.reset_cache()
     return HOST
 
 

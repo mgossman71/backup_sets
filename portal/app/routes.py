@@ -3,7 +3,9 @@ import functools
 import hmac
 import secrets
 import time
+from urllib.parse import urlsplit
 
+from werkzeug.exceptions import HTTPException
 from flask import (Blueprint, abort, current_app, jsonify, redirect, render_template, request,
                    session, url_for)
 
@@ -39,8 +41,32 @@ def inject():
 def check_csrf():
     if request.method in UNSAFE:
         sent = request.headers.get("X-CSRF-Token") or request.form.get("csrf") or ""
-        if not hmac.compare_digest(sent, session.get("csrf", "")):
+        expected = session.get("csrf") or ""
+        # both must be present: compare_digest("", "") is True, so an empty session token
+        # (no session at all) would otherwise let a token-less request through
+        if not sent or not expected or not hmac.compare_digest(sent, expected):
             abort(400, "CSRF token missing or invalid - reload the page")
+
+
+@bp.app_errorhandler(HTTPException)
+def http_error(e):
+    """API callers get JSON errors (the page scripts show error.message); pages keep HTML."""
+    if request.path.startswith("/api/"):
+        return jsonify(error=e.description), e.code
+    return e
+
+
+def safe_next(nxt):
+    """Only redirect to a path on this site. Browsers treat '\\' like '/' and drop tabs and
+    newlines from URLs, so '/\\evil.com' or '/<TAB>/evil.com' would leave the site."""
+    if not nxt or not nxt.startswith("/") or nxt.startswith("//"):
+        return None
+    if "\\" in nxt or any(ord(c) < 32 or ord(c) == 127 for c in nxt):
+        return None
+    parts = urlsplit(nxt)
+    if parts.scheme or parts.netloc:
+        return None
+    return nxt
 
 
 def login_required(api=False):
@@ -50,7 +76,7 @@ def login_required(api=False):
             user = session.get("user")
             if user and time.time() - session.get("checked", 0) > REAUTH_SECONDS:
                 # account removed from the allowed group, locked, etc.
-                if not auth.is_authorized(user) or auth._shadow_entry(user) is None:
+                if not auth.is_authorized(user) or auth.shadow_entry(user) is None:
                     session.clear()
                     user = None
                 else:
@@ -91,7 +117,7 @@ def login():
             session["checked"] = time.time()
             print(f"login ok: {user} from {ip}", flush=True)
             nxt = request.args.get("next", "")
-            return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else url_for("portal.dashboard"))
+            return redirect(safe_next(nxt) or url_for("portal.dashboard"))
         else:
             auth.record_failure(ip)
             print(f"login failed: {user!r} from {ip}", flush=True)
@@ -229,7 +255,7 @@ def api_config_save():
 def api_config_validate():
     body = request.get_json(silent=True) or {}
     backups = config_store.normalize_backups(body.get("backups", []))
-    mps = [config_store._norm(m) for m in body.get("required_mount_points", []) if str(m).strip()]
+    mps = [config_store.norm_path(m) for m in body.get("required_mount_points", []) if str(m).strip()]
     errors, warnings = config_store.validate(backups, mps, " ".join(str(body.get("rsync_opts", "")).split()))
     return jsonify(errors=errors, warnings=warnings)
 
@@ -245,8 +271,8 @@ def _saved_entry(cfg, source, destination):
 @bp.get("/api/folders")
 @login_required(api=True)
 def api_folders():
-    source = config_store._norm(request.args.get("source", ""))
-    destination = config_store._norm(request.args.get("destination", ""))
+    source = config_store.norm_path(request.args.get("source", ""))
+    destination = config_store.norm_path(request.args.get("destination", ""))
     for p in (source, destination):
         if not p.startswith("/") or not _in_browse_roots(p):
             return jsonify(error=f"paths must be inside {', '.join(BROWSE_ROOTS)}"), 400
@@ -280,8 +306,8 @@ def _removable(saved, source, folder):
 @login_required(api=True)
 def api_remove_dest_folder():
     body = request.get_json(silent=True) or {}
-    source = config_store._norm(body.get("source", ""))
-    destination = config_store._norm(body.get("destination", ""))
+    source = config_store.norm_path(body.get("source", ""))
+    destination = config_store.norm_path(body.get("destination", ""))
     folder = str(body.get("folder", ""))
     if not config_store.valid_folder_name(folder):
         return jsonify(error="Invalid folder name"), 400
@@ -308,8 +334,8 @@ def api_remove_dest_folder():
 def api_cleanup_plan():
     """Backup Folder Cleanup step 1: compare the backup folder with the source (read-only)."""
     body = request.get_json(silent=True) or {}
-    source = config_store._norm(body.get("source", ""))
-    destination = config_store._norm(body.get("destination", ""))
+    source = config_store.norm_path(body.get("source", ""))
+    destination = config_store.norm_path(body.get("destination", ""))
     saved = _saved_entry(_cfg(), source, destination)
     if not saved:
         return jsonify(error="That backup set isn't saved in config.yaml yet - save first"), 409

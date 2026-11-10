@@ -13,7 +13,11 @@ from collections import defaultdict, deque
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
-    import crypt  # noqa: E402  (deprecated, still present in 3.12)
+    try:
+        import crypt  # noqa: E402  (deprecated in 3.12, removed in 3.13)
+    except ImportError as e:  # fail loudly at startup, not with "invalid password" at login
+        raise ImportError("The portal needs Python's crypt module, which Python 3.13 removed. "
+                          "Keep the portal image on Python 3.12 (portal/Dockerfile).") from e
 
 from .settings import ALLOWED_GROUP, ALLOWED_USERS, hostpath
 
@@ -32,7 +36,7 @@ def _read_db(name):
         return [line.rstrip("\n").split(":") for line in f if line.strip() and not line.startswith("#")]
 
 
-def _shadow_entry(user):
+def shadow_entry(user):
     for fields in _read_db("shadow"):
         if fields[0] == user:
             return fields
@@ -63,7 +67,7 @@ def check_password(user, password):
     if not USER_RE.match(user or "") or not password:
         crypt.crypt(password or "", _DUMMY_HASH)
         return False
-    entry = _shadow_entry(user)
+    entry = shadow_entry(user)
     pw_hash = entry[1] if entry and len(entry) > 1 else ""
     if not pw_hash or pw_hash[0] in "!*" or not pw_hash.startswith("$"):
         crypt.crypt(password, _DUMMY_HASH)
@@ -76,9 +80,16 @@ def check_password(user, password):
     return computed is not None and hmac.compare_digest(computed, pw_hash)
 
 
+def _prune(now):
+    """Drop IPs with no recent failures, so the table can't grow without bound."""
+    for ip in [ip for ip, q in _failures.items() if not q or q[-1] < now - WINDOW_SECONDS]:
+        del _failures[ip]
+
+
 def rate_limited(ip):
     now = time.time()
     with _fail_lock:
+        _prune(now)
         q = _failures[ip]
         while q and q[0] < now - WINDOW_SECONDS:
             q.popleft()

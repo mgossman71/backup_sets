@@ -44,15 +44,16 @@ log() {
 
 valid_path() { [ -n "$1" ] && [ "$1" != "null" ]; }
 
-# A backup is running only if the running flag's PID is a live backup.sh process.
-# A stale flag (crashed run) must not block Run now or removals. Same rule as backup.sh;
-# a flag without a PID is treated as running, to be safe.
+# A backup is running only if the running flag's PID is a live backup.sh (or
+# host/cleanup.py) process. A stale flag (crashed run) must not block Run now or
+# removals. A flag without a PID is treated as running, to be safe. Same rule as
+# backup.sh, host/cleanup.py and portal/app/status.py (tests/shell/test_running_flag_parity.py).
 backup_running() {
     valid_path "$RUNNING_FLAG" && [ -e "$RUNNING_FLAG" ] || return 1
     local pid
     pid=$(head -c 32 "$RUNNING_FLAG" 2>/dev/null | tr -dc '0-9')
     [ -z "$pid" ] && return 0
-    grep -qa "backup.sh" "/proc/$pid/cmdline" 2>/dev/null
+    grep -qaE 'backup\.sh|host/cleanup\.py' "/proc/$pid/cmdline" 2>/dev/null
 }
 
 # Write the status file the portal polls. Args: id status message [extra json fields]
@@ -168,7 +169,7 @@ for req in "$REQUEST_DIR"/*; do
                 continue
             fi
             log "run requested by $user - starting backup"
-            "$SYSTEMD_RUN" --quiet --collect --unit="backup-sets-portal-$(date +%s)" \
+            "$SYSTEMD_RUN" --quiet --collect --unit="backup-sets-portal-$(date +%s)-$$-$RANDOM" \
                 --setenv=BACKUP_TRIGGER=portal --setenv=BACKUP_CONFIG="$CONFIG_FILE" \
                 /bin/bash -c "exec /bin/bash '$BACKUP_DIR/backup.sh' >> '$CRON_LOG' 2>&1"
             ;;
@@ -184,7 +185,7 @@ for req in "$REQUEST_DIR"/*; do
         schedule)
             # quick, so run directly; schedule.py validates and rewrites only its own crontab block
             /usr/bin/env python3 -I "$SCRIPT_DIR/schedule.py" "$content" "$LOG_FILE" \
-                "$STATE_DIR/schedule_status.json" "$BACKUP_DIR" || true
+                "$STATE_DIR/schedule_status.json" "$BACKUP_DIR" "$CRON_LOG" || true
             ;;
         cleanup-*)
             if [[ "$action" =~ ^cleanup-([0-9a-f]{32})$ ]]; then

@@ -60,6 +60,9 @@ rsync_opts: "-av --stats"
   Use it only for manual runs in a terminal.
 - Options are split on spaces exactly as written: no quoting, and no wildcard expansion by the shell, so
   `--exclude=*.tmp` reaches rsync as typed. Option values containing spaces aren't supported.
+- **The portal's option checks are a safety net, not a security boundary.** The portal refuses options such as
+  `-e`/`--rsh`, `--rsync-path` or `--remove-source-files`, but `backup.sh` runs whatever is in `config.yaml`,
+  and anyone who can edit that file by hand (root) can set any option.
 
 #### running_flag / fail_flag / stop_flag
 Paths to the flag files used to control and monitor the script. Customize these when running multiple instances simultaneously — each instance must use a unique set of flag file paths.
@@ -358,7 +361,7 @@ backups:
 ## Safety Features
 
 1. **Single instance**: Only one run at a time. The running flag is created atomically and contains the
-   run's process ID. If a run crashed (power loss, `kill -9`), the next run sees that the process is gone,
+   process ID of the run (or of a Backup Folder Cleanup, which holds it while deleting). If a run crashed (power loss, `kill -9`), the next run sees that the process is gone,
    logs "Removing stale running flag", and carries on, so a leftover flag can't block backups forever.
    A flag without a process ID (made by hand or by an older version) is respected as "running".
 2. **Stop control**: Touch the `stop_flag` path (or click **Pause** in the portal) to prevent runs. If you
@@ -391,11 +394,23 @@ The container never runs rsync and never writes to `/mnt`. Backups still run on 
 from cron, exactly as before. "Run now", "Pause", and "Clear failed" go through
 a small systemd path unit on the host.
 
+**Container hardening** (`docker-compose.yml`): the container's own filesystem is read-only (only a small
+`/tmp` is writable), every Linux capability is dropped, it can't gain privileges, and it has PID and memory
+limits. It still runs as root because it must read `/etc/shadow` for logins; without capabilities it can
+only read files that root owns or that everyone can read. If folder sizes under `/mnt` ever show
+"permission denied", add `cap_add: [DAC_READ_SEARCH]` (that also lets it read other users' private files).
+The image pins Python 3.12 (`portal/Dockerfile`), because login checking uses the `crypt` module that
+Python 3.13 removed; on a newer Python the portal refuses to start with a clear message.
+
 ### Install / start
 ```bash
 sudo bash /opt/backup_sets/host/install.sh      # state dir, systemd bridge, TLS cert, history backfill, logrotate
 cd /opt/backup_sets && sudo docker compose up -d --build
 ```
+`install.sh` first checks for everything it needs (`rsync`, `jq`, the Python yq, `python3-yaml`, `openssl`,
+`systemctl`, `docker` with the compose plugin, `crontab`). If anything is missing it lists it and stops
+**before changing anything**.
+
 Then open **https://<server-ip>:8443**. The certificate is self-signed (in `/var/lib/backup_sets/tls/`),
 so your browser will warn the first time. Replace `cert.pem`/`key.pem` with your own certificate if you have one.
 
@@ -427,6 +442,16 @@ The portal indexes both files into `/var/lib/backup_sets/portal.db`.
 
 `backup.sh` also accepts two environment overrides: `BACKUP_CONFIG=/path/to/config.yaml` and
 `BACKUP_TRIGGER=<label>` (recorded as the run's trigger; defaults to `cron`, or `manual` from a terminal).
+
+### Files and retention
+| What | Where | Kept |
+|---|---|---|
+| Backup log | `/var/log/backup_sets.log` | rotated weekly, 8 weeks (logrotate) |
+| Cron output | `/var/log/backup_sets_cron.log` | rotated weekly, 8 weeks. Normally only errors: log lines go to the backup log, and are echoed to the screen only for runs started in a terminal |
+| Run history | `history.jsonl`, `portal.db` | forever (a few KB per day) |
+| Filesystem usage snapshots | `portal.db` | 2 years |
+| Cleanup comparisons and their results | `cleanup/` | 30 days |
+| Temporary files (rsync stats, selection filters) | `/var/lib/backup_sets/tmp` (mode 700, not the shared `/tmp`) | removed after each run; leftovers from a killed run are swept after a day |
 
 ### Troubleshooting
 - Portal logs: `docker logs backup-portal`
@@ -516,7 +541,8 @@ button that removes them:
    items that still exist in the backup, are still missing from the source, are not protected, and whose
    parent folders are real folders inside the backup (no symlinks). It refuses the whole cleanup if the
    source folder is missing or **empty** (usually an unmounted disk), if a backup is running, or if the
-   comparison is more than an hour old.
+   comparison is more than an hour old. While it deletes, it holds the backup running flag, so a scheduled
+   backup that starts meanwhile is skipped (the dashboard shows "Backup Folder Cleanup in progress").
 
 The button is only enabled for a backup set that is saved with no unsaved changes. Each cleanup is logged
 in the backup log; the full list of deleted paths is kept in `/var/lib/backup_sets/cleanup/<id>.deleted.txt`.
@@ -538,7 +564,10 @@ if anything fails.
 |---|---|---|
 | backup.sh | `tests/shell/test_backup.py` | copying, history records, stop / running / fail flags (incl. stale flags and pausing mid-run), mount checks, failures, simultaneous starts, interrupts, rsync options passed exactly as written, include/exclude selection (odd names, wildcards, nested folders) |
 | Action bridge | `tests/shell/test_actions.py` | run / pause / resume / clear requests, and every safety rule for removing folders from a backup disk |
-| Cleanup (host) | `tests/shell/test_cleanup.py` | every safety rule of Backup Folder Cleanup |
+| Cleanup (host) | `tests/shell/test_cleanup.py` | every safety rule of Backup Folder Cleanup, malformed plans, holding the running flag |
+| Running flag | `tests/shell/test_running_flag_parity.py` | the four implementations of "is a backup running?" (backup.sh, actions.sh, cleanup.py, portal) agree |
+| Installer | `tests/shell/test_install.py` | missing dependencies stop `install.sh` before it changes anything |
+| Portal hardening | `tests/portal/test_hardening.py` | login redirect, CSRF without a session, JSON API errors, concurrent config saves, hung mounts, pruning |
 | Cleanup (portal) | `tests/portal/test_cleanup_api.py` | the comparison, protected folders, confirmation and refusals |
 | Schedule (host) | `tests/shell/test_schedule.py` | crontab block rewriting, other lines untouched, injection attempts refused |
 | Schedule (portal) | `tests/portal/test_schedule_api.py` | presets, validation (same rules as the host), reading the crontab, the save request |

@@ -16,6 +16,28 @@ STATE_DIR=/var/lib/backup_sets
 
 [ "$(id -u)" -eq 0 ] || { echo "Run as root"; exit 1; }
 
+# ---- check every dependency first, so a missing one stops us before anything changes
+missing=()
+for cmd in rsync jq yq python3 openssl systemctl docker crontab; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+done
+if command -v yq >/dev/null 2>&1 && { yq --version 2>&1 | grep -qi mikefarah || \
+        ! echo 'a: [1]' | yq -r '.a | length' 2>/dev/null | grep -qx 1; }; then
+    missing+=("yq (the Python yq is required - 'apt install yq'; the Go yq from snap is not supported)")
+fi
+if command -v python3 >/dev/null 2>&1 && ! python3 -c 'import yaml' 2>/dev/null; then
+    missing+=("python3-yaml")
+fi
+if command -v docker >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+    missing+=("docker compose plugin")
+fi
+if [ ${#missing[@]} -gt 0 ]; then
+    echo "Missing dependencies - nothing was changed:"
+    printf '  - %s\n' "${missing[@]}"
+    echo "On Ubuntu: sudo apt install rsync jq yq python3-yaml openssl docker.io docker-compose-v2 cron"
+    exit 1
+fi
+
 echo "==> State directory: $STATE_DIR"
 install -d -m 0755 "$STATE_DIR"
 install -d -m 0700 "$STATE_DIR/requests" "$STATE_DIR/tls"

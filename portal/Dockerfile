@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+# Pinned: the portal needs Python 3.12 (crypt module, removed in 3.13).
+FROM python:3.12.15-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app

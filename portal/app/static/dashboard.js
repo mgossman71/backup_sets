@@ -8,7 +8,7 @@
     const f = s.flags;
     let icon, cls, title, sub;
     if (f.running) {
-      icon = "↻"; cls = "info"; title = "Backup running";
+      icon = "↻"; cls = "info"; title = f.running.by === "cleanup" ? "Backup Folder Cleanup in progress" : "Backup running";
       sub = "Started " + relTime(f.running.since);
     } else if (f.failed) {
       icon = "✕"; cls = "critical"; title = "Last backup failed";

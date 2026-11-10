@@ -7,7 +7,10 @@ validated again). Any *active* line elsewhere that runs this backup.sh is commen
 out so backups never run twice. The new crontab is installed with `crontab -`; if
 anything fails, the existing crontab is left as it was.
 
-Usage: schedule.py REQUEST_JSON LOG_FILE STATUS_JSON BACKUP_DIR
+Usage: schedule.py REQUEST_JSON LOG_FILE STATUS_JSON BACKUP_DIR [CRON_LOG]
+       CRON_LOG is where scheduled runs write their output (default
+       /var/log/backup_sets_cron.log; host/actions.sh passes its own CRON_LOG so portal
+       "Run now" and scheduled runs log to the same file).
        (CRONTAB_CMD env var overrides the crontab command, for tests)
 """
 import json
@@ -79,7 +82,7 @@ def rewrite(text, enabled, expr, command, script):
     return "\n".join(out) + "\n"
 
 
-def main(request_json, log_file, status_path, backup_dir):
+def main(request_json, log_file, status_path, backup_dir, cron_log="/var/log/backup_sets_cron.log"):
     crontab = os.environ.get("CRONTAB_CMD", "crontab")
     req = {}
 
@@ -115,7 +118,9 @@ def main(request_json, log_file, status_path, backup_dir):
         return finish("failed", f"refused (requested by {user}): invalid schedule {expr!r}")
 
     script = os.path.join(backup_dir, "backup.sh")
-    command = f"bash {script} >> /var/log/backup_sets_cron.log 2>&1"
+    if not re.fullmatch(r"/[A-Za-z0-9._/-]+", cron_log or ""):
+        return finish("failed", f"refused: unsafe cron log path {cron_log!r}")
+    command = f"bash {script} >> {cron_log} 2>&1"
 
     cur = subprocess.run([crontab, "-l"], capture_output=True, text=True)
     if cur.returncode != 0:
@@ -147,7 +152,7 @@ def main(request_json, log_file, status_path, backup_dir):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
+    if len(sys.argv) not in (5, 6):
         print(__doc__)
         sys.exit(2)
     sys.exit(main(*sys.argv[1:]))

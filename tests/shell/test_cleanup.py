@@ -263,3 +263,122 @@ def test_cleanup_allowed_despite_stale_running_flag(cb):
     pid = cb.plan(["GoneShow"])
     cb.process()
     assert cb.result(pid)["status"] == "done"
+
+
+# --------------------------------------------------------------------------- review 2: malformed plans
+@pytest.mark.parametrize("change,fragment", [
+    ({"created": None}, "no valid creation time"),
+    ({"created": "yesterday"}, "no valid creation time"),
+    ({"items": "GoneShow"}, "items must be a list"),
+    ({"items": [1, 2]}, "items must be a list"),
+    ({"source": None}, "source/destination missing"),
+    ({"destination": 5}, "source/destination missing"),
+])
+def test_malformed_plan_reports_failure_instead_of_crashing(cb, change, fragment):
+    """Regression: {"created": null} raised a TypeError, wrote no status file, and the portal
+    showed the cleanup as queued forever."""
+    pid = cb.plan(["GoneShow"])
+    p = cb.plans / f"{pid}.json"
+    data = json.loads(p.read_text())
+    data.update(change)
+    p.write_text(json.dumps(data))
+    cb.process()
+    r = cb.result(pid)
+    assert r["status"] == "failed" and fragment in r["message"]
+    assert (cb.dst / "TV/GoneShow").exists()
+
+
+def test_plan_that_is_not_an_object(cb):
+    pid = cb.plan(["GoneShow"])
+    (cb.plans / f"{pid}.json").write_text("[1, 2, 3]")
+    cb.process()
+    assert cb.result(pid)["status"] == "failed"
+
+
+def test_audit_list_path(cb):
+    pid = cb.plan(["GoneShow"])
+    cb.process()
+    assert (cb.plans / f"{pid}.deleted.txt").read_text() == "GoneShow\n"
+
+
+# --------------------------------------------------------------------------- review 2: cleanup holds the flag
+def _holder(cb, tag):
+    """A live process whose command line names `tag`, holding the running flag via cleanup's helper."""
+    import subprocess
+    import sys
+    from helpers import REPO
+    code = ("import sys, time; sys.path.insert(0, sys.argv[1]); import cleanup; "
+            "assert cleanup.take_running_flag(sys.argv[2]); print('held', flush=True); time.sleep(60)")
+    p = subprocess.Popen([sys.executable, "-c", code, str(REPO / "host"), str(cb.running_flag), tag],
+                         stdout=subprocess.PIPE, text=True)
+    assert p.stdout.readline().strip() == "held"
+    return p
+
+
+def test_backup_is_skipped_while_cleanup_holds_the_flag(cb):
+    holder = _holder(cb, "host/cleanup.py")
+    try:
+        assert cb.running_flag.read_text().split() == [str(holder.pid), "cleanup"]
+        r = cb.run()
+        assert r.returncode == 1 and cb.last_run()["status"] == "skipped"
+        cb.request("run")
+        cb.process()
+        assert "ignored - backup already running" in cb.log_text()
+    finally:
+        holder.kill()
+        holder.wait()
+    # once the cleanup is gone its flag is stale and the next backup proceeds
+    assert cb.run().returncode == 0 and cb.last_run()["status"] == "success"
+
+
+def test_cleanup_waits_for_nothing_but_refuses_while_another_cleanup_holds_the_flag(cb):
+    holder = _holder(cb, "host/cleanup.py")
+    try:
+        pid = cb.plan(["GoneShow"])
+        cb.process()
+        assert cb.result(pid)["status"] == "failed" and "backup is running" in cb.result(pid)["message"]
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_cleanup_releases_the_flag_and_never_removes_someone_elses(cb):
+    pid = cb.plan(["GoneShow"])
+    cb.process()
+    assert cb.result(pid)["status"] == "done"
+    assert not cb.running_flag.exists(), "flag released after the cleanup"
+    import importlib.util
+    from helpers import REPO
+    spec = importlib.util.spec_from_file_location("hc", REPO / "host/cleanup.py")
+    hc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hc)
+    other = f"{os.getpid() + 1000000} cleanup\n"  # not this process (pytest may be PID 1 in a container)
+    cb.running_flag.write_text(other)
+    hc.release_running_flag(str(cb.running_flag))
+    assert cb.running_flag.read_text() == other
+
+
+def test_flag_is_held_while_deleting(cb, monkeypatch):
+    """The running flag must exist (owned by the cleanup) at the moment items are deleted,
+    so a scheduled backup can't start mid-cleanup - and be gone afterwards."""
+    import importlib.util
+    from helpers import REPO
+    spec = importlib.util.spec_from_file_location("hc_hold", REPO / "host/cleanup.py")
+    hc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hc)
+    seen = []
+    real_rmtree = hc.shutil.rmtree
+
+    def watching_rmtree(path, *a, **kw):
+        seen.append(cb.running_flag.read_text() if cb.running_flag.exists() else None)
+        return real_rmtree(path, *a, **kw)
+
+    monkeypatch.setattr(hc.shutil, "rmtree", watching_rmtree)
+    cb.write_config()
+    pid = cb.plan(["GoneShow"])
+    (cb.req / f"cleanup-{pid}").unlink()  # run it directly, not through the bridge
+    rc = hc.Run(str(cb.plans / f"{pid}.json"), str(cb.plans / f"{pid}.status.json"), str(cb.config_path),
+                str(cb.log), "gozz").main()
+    assert rc == 0 and cb.result(pid)["status"] == "done"
+    assert seen == [f"{os.getpid()} cleanup\n"], seen
+    assert not cb.running_flag.exists()

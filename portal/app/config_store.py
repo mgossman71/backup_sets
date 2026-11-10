@@ -3,6 +3,8 @@ import hashlib
 import io
 import os
 import shlex
+import tempfile
+import threading
 import time
 
 from ruamel.yaml import YAML
@@ -20,6 +22,9 @@ FORBIDDEN_LONG = ("--rsh", "--rsync-path", "--remote-option", "--daemon", "--con
                   "--write-batch", "--only-write-batch", "--read-batch", "--log-file", "--remove-source-files",
                   "--exclude-from", "--include-from", "--password-file", "--write-devices")
 FORBIDDEN_SHORT = {"e": "-e (--rsh)", "M": "-M (--remote-option)"}
+
+
+_save_lock = threading.Lock()
 
 
 class ConflictError(Exception):
@@ -97,8 +102,8 @@ def normalize_backups(raw):
             if f not in folders:
                 folders.append(f)
         out.append({
-            "source": _norm(b.get("source")),
-            "destination": _norm(b.get("destination")),
+            "source": norm_path(b.get("source")),
+            "destination": norm_path(b.get("destination")),
             "mode": mode if folders or mode == "include" else "all",
             "folders": folders if mode in ("include", "exclude") else [],
             "include_root_files": b.get("include_root_files") is not False,
@@ -110,7 +115,7 @@ def valid_folder_name(name):
     return bool(name) and name not in (".", "..") and "/" not in name and "\n" not in name and "\0" not in name
 
 
-def _norm(p):
+def norm_path(p):
     p = (p or "").strip()
     if not p.startswith("/"):
         return p
@@ -216,7 +221,7 @@ def validate(backups, mount_points, rsync_opts):
 def save(new, expected_version, user="portal", force=False):
     """Apply backups / required_mount_points / rsync_opts. Returns (version, warnings)."""
     backups = normalize_backups(new.get("backups", []))
-    mount_points = [_norm(m) for m in new.get("required_mount_points", []) if str(m).strip()]
+    mount_points = [norm_path(m) for m in new.get("required_mount_points", []) if str(m).strip()]
     rsync_opts = " ".join(str(new.get("rsync_opts", "")).split())
 
     errors, warnings = validate(backups, mount_points, rsync_opts)
@@ -225,6 +230,13 @@ def save(new, expected_version, user="portal", force=False):
     if warnings and not force:
         raise ValidationError([], warnings)
 
+    # One save at a time (gunicorn runs several threads): the version check and the
+    # write must not interleave with another save.
+    with _save_lock:
+        return _write_locked(backups, mount_points, rsync_opts, expected_version, user, warnings)
+
+
+def _write_locked(backups, mount_points, rsync_opts, expected_version, user, warnings):
     text = _read_raw()
     if version_of(text) != expected_version:
         raise ConflictError("config.yaml was changed by someone else - reload and try again")
@@ -239,12 +251,16 @@ def save(new, expected_version, user="portal", force=False):
     out = buf.getvalue()
 
     _write_backup_copy(text, user)
-    tmp = CONFIG_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(out)
-    st = os.stat(CONFIG_FILE)
-    os.chmod(tmp, st.st_mode & 0o777)
-    os.replace(tmp, CONFIG_FILE)
+    fd, tmp = tempfile.mkstemp(prefix=".config.yaml.", suffix=".tmp", dir=os.path.dirname(CONFIG_FILE))
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(out)
+        os.chmod(tmp, os.stat(CONFIG_FILE).st_mode & 0o777)
+        os.replace(tmp, CONFIG_FILE)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
     return version_of(out), warnings
 
 

@@ -70,11 +70,15 @@ class Sched(Bridge):
 def sc(tmp_path):
     s = Sched(tmp_path)
     s.crontab.write_text(USER_CRONTAB)
+    CRON_LOG["path"] = str(s.cron_log)  # actions.sh passes its CRON_LOG to schedule.py
     return s
 
 
+CRON_LOG = {"path": "/var/log/backup_sets_cron.log"}
+
+
 def backup_line(script_dir, expr, enabled=True):
-    return ("" if enabled else "#") + f"{expr} bash {script_dir}/backup.sh >> /var/log/backup_sets_cron.log 2>&1"
+    return ("" if enabled else "#") + f"{expr} bash {script_dir}/backup.sh >> {CRON_LOG['path']} 2>&1"
 
 
 @pytest.fixture
@@ -195,3 +199,23 @@ def test_command_comes_from_the_host_not_the_request(sc, script_dir):
     sc.set(None, None, raw=raw)
     assert sc.block() == backup_line(script_dir, "0 2 * * *")
     assert "rm -rf" not in sc.text()
+
+
+def test_scheduled_runs_log_to_the_bridges_cron_log(sc):
+    """Regression: schedule.py hard-coded /var/log/backup_sets_cron.log while actions.sh's
+    CRON_LOG is configurable, so scheduled and portal-started runs could log to different files."""
+    sc.set(True, "0 2 * * *")
+    assert f">> {sc.cron_log} 2>&1" in sc.block()
+
+
+@pytest.mark.parametrize("bad", ["/tmp/x;rm -rf /", "relative.log", "/tmp/a b.log", "/tmp/$(id).log"])
+def test_unsafe_cron_log_path_is_refused(sc, bad):
+    import subprocess, sys
+    from helpers import REPO
+    req = json.dumps({"user": "gozz", "id": "x", "enabled": True, "expr": "0 2 * * *"})
+    env = dict(os.environ, CRONTAB_CMD=str(sc.crontab_stub), FAKE_CRONTAB_FILE=str(sc.crontab))
+    subprocess.run([sys.executable, "-I", str(REPO / "host/schedule.py"), req, str(sc.log), str(sc.status_file),
+                    str(REPO), bad], env=env, capture_output=True)
+    st = json.loads(sc.status_file.read_text())
+    assert st["status"] == "failed" and "unsafe cron log path" in st["message"]
+    assert sc.text() == USER_CRONTAB

@@ -100,11 +100,54 @@ def test_successful_run_clears_old_fail_flag(bk):
 
 
 def test_no_temp_files_left_behind(bk):
-    before = set(glob.glob("/tmp/backup_sets_*"))
+    before = set(glob.glob("/tmp/backup_sets*"))
     bk.add(make_tv(bk))
     bk.add(bk.src / "missing")
     bk.run()
-    assert set(glob.glob("/tmp/backup_sets_*")) == before
+    assert set(glob.glob("/tmp/backup_sets*")) == before, "nothing is written to the world-readable /tmp"
+    assert os.listdir(bk.history_path.parent / "tmp") == []
+
+
+def test_temp_files_live_next_to_the_history_file(bk):
+    bk.add(make_tv(bk))
+    bk.run()
+    tmp = bk.history_path.parent / "tmp"
+    assert tmp.is_dir() and oct(tmp.stat().st_mode & 0o777) == "0o700"
+
+
+def test_stale_temp_files_from_a_killed_run_are_swept(bk):
+    tmp = bk.history_path.parent / "tmp"
+    tmp.mkdir(parents=True)
+    old, new = tmp / "backup_sets_stats.OLD", tmp / "backup_sets_stats.NEW"
+    old.write_text("x")
+    new.write_text("x")
+    t = time.time() - 2 * 86400
+    os.utime(old, (t, t))
+    bk.add(make_tv(bk))
+    bk.run()
+    assert not old.exists() and new.exists()
+
+
+def test_log_lines_go_to_the_log_not_to_cron_output(bk):
+    """Regression: every log line was also printed, so the cron log got a copy of everything."""
+    bk.add(make_tv(bk))
+    r = bk.run()
+    assert "Backup script started" in bk.log_text()
+    assert "Backup script started" not in r.stdout
+
+
+def test_pause_during_the_last_set_is_noted(bk):
+    write_tree(bk.src / "Big", {"big.bin": os.urandom(600_000)})
+    bk.add(bk.src / "Big")
+    bk.rsync_opts = "-a --stats --bwlimit=200"
+    p = bk.popen()
+    for _ in range(50):
+        if bk.running_flag.exists():
+            break
+        time.sleep(0.1)
+    bk.stop_flag.write_text("")
+    p.wait(60)
+    assert "last backup set had already started, so it finished" in bk.log_text()
 
 
 def test_history_problems_never_block_the_backup(bk):

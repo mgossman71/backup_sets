@@ -106,12 +106,32 @@ load_config() {
     log "RUN_ID: $RUN_ID (trigger: $TRIGGER)"
 
     init_history
+    init_tmp_dir
+}
+
+# Temp files (rsync stats, selection filters) live next to the history file, not in the
+# world-readable /tmp. Leftovers from a run that was killed are swept here.
+init_tmp_dir() {
+    TMP_DIR="$(dirname "${HISTORY_FILE:-$DEFAULT_HISTORY_FILE}")/tmp"
+    if ! mkdir -p "$TMP_DIR" 2>/dev/null || ! chmod 700 "$TMP_DIR" 2>/dev/null; then
+        TMP_DIR=$(mktemp -d /tmp/backup_sets.XXXXXX)
+        log "WARNING: using temporary folder $TMP_DIR"
+    fi
+    find "$TMP_DIR" -maxdepth 1 -type f -name 'backup_sets_*' -mmin +1440 -delete 2>/dev/null
 }
 
 # Logging function with timestamp
+# Write to the log file; also to the screen when run from a terminal. (From cron, stdout
+# goes to backup_sets_cron.log, which would otherwise get a copy of every line.)
+LOG_WRITE_WARNED=0
 log() {
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] $1" | tee -a "$LOG_FILE"
+    local line="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+    if ! echo "$line" >> "$LOG_FILE" 2>/dev/null && [ "$LOG_WRITE_WARNED" -eq 0 ]; then
+        LOG_WRITE_WARNED=1
+        echo "WARNING: cannot write to log file $LOG_FILE" >&2
+    fi
+    [ -t 1 ] && echo "$line"
+    return 0
 }
 
 #------------------------------------------------------------------------------
@@ -269,7 +289,7 @@ build_filter_file() {
 
     SELECTION_MODE="all"
     SELECTION_COUNT=0
-    FILTER_FILE=$(mktemp /tmp/backup_sets_filter.XXXXXX)
+    FILTER_FILE=$(mktemp "$TMP_DIR/backup_sets_filter.XXXXXX")
 
     if [ "$inc_n" -gt 0 ] && [ "$exc_n" -gt 0 ]; then
         error_exit "Backup entry $i has both include and exclude lists - use only one"
@@ -360,16 +380,18 @@ check_stop_flag() {
     fi
 }
 
-# Is the running flag held by a backup that is actually still running?
-# The flag holds the PID of the run that created it. If that process is gone (power
-# loss, kill -9) or is no longer backup.sh (PID reused), the flag is stale.
+# Is the running flag held by a backup (or a Backup Folder Cleanup) that is still running?
+# The flag holds the PID of the process that created it. If that process is gone (power
+# loss, kill -9) or is no longer backup.sh / host/cleanup.py (PID reused), the flag is stale.
 # A flag without a PID (older versions, or created by hand) is treated as active.
+# Same rule as host/actions.sh, host/cleanup.py and portal/app/status.py
+# (tests/shell/test_running_flag_parity.py keeps the four in step).
 running_flag_active() {
     [ -e "$RUNNING_FLAG" ] || return 1
     local pid
     pid=$(head -c 32 "$RUNNING_FLAG" 2>/dev/null | tr -dc '0-9')
     [ -z "$pid" ] && return 0
-    grep -qa "backup.sh" "/proc/$pid/cmdline" 2>/dev/null
+    grep -qaE 'backup\.sh|host/cleanup\.py' "/proc/$pid/cmdline" 2>/dev/null
 }
 
 # Remove a stale running flag (logged), so a crashed run cannot block backups forever
@@ -449,7 +471,7 @@ backup_folder() {
     log "Running: rsync $RSYNC_OPTS --filter=\"merge <selection>\" $source_path/ $dest_path/"
 
     local stats_file
-    stats_file=$(mktemp /tmp/backup_sets_stats.XXXXXX)
+    stats_file=$(mktemp "$TMP_DIR/backup_sets_stats.XXXXXX")
 
     # split on whitespace only: no wildcard expansion, so "--exclude=*.tmp" reaches rsync as typed
     local -a rsync_args
@@ -512,6 +534,9 @@ process_backups() {
         backup_folder "$source_path" "$destination" "$i"
     done
 
+    if [ -f "$STOP_FLAG" ]; then
+        log "Stop flag was set during the run, but the last backup set had already started, so it finished"
+    fi
     log "All backup jobs completed successfully"
 }
 

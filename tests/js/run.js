@@ -129,6 +129,14 @@ test("dashboard: a stale running flag is explained, not shown as running", async
   assert.equal(p.$("#btn-run").disabled, false);
 });
 
+test("dashboard: a cleanup holding the running flag is named as such", async () => {
+  const api = JSON.parse(JSON.stringify(API));
+  api["/api/status"].flags.running = { path: "/mnt/.backup_running", since: Date.now() / 1000 - 30, by: "cleanup" };
+  const p = await loadPage("dashboard", { api });
+  assert.match(p.text("#status-main"), /Backup Folder Cleanup in progress/);
+  assert.equal(p.$("#btn-run").disabled, true);
+});
+
 test("dashboard: missing cron entry is called out", async () => {
   const api = JSON.parse(JSON.stringify(API));
   api["/api/status"].schedules = [];

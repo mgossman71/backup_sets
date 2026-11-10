@@ -130,14 +130,20 @@ _LINE = re.compile(r"^(#?)\s*(\S+ \S+ \S+ \S+ \S+)\s+(.*)$")
 def parse_crontab(text, backup_dir="/opt/backup_sets"):
     """{managed: {enabled, expr} | None, unmanaged: [active backup.sh lines outside the block],
     broken: bool (BEGIN without END)}"""
-    managed, unmanaged, inside, broken = None, [], False, False
+    managed, unmanaged, inside, broken, blocks = None, [], False, False, 0
     script = f"{backup_dir}/backup.sh"
     for raw in text.splitlines():
         line = raw.strip()
         if line == BEGIN:
+            # a BEGIN inside a block, or a second block: the host refuses to edit this crontab
+            if inside or blocks:
+                broken = True
             inside = True
+            blocks += 1
             continue
         if line == END:
+            if not inside:
+                broken = True  # END without BEGIN (host refuses this too)
             inside = False
             continue
         if inside:

@@ -111,7 +111,7 @@ def test_save_is_atomic_and_keeps_permissions(host):
     os.chmod(CONFIG, 0o640)
     save({0: {"mode": "exclude", "folders": ["Big Show"]}})
     assert oct(os.stat(CONFIG).st_mode & 0o777) == "0o640"
-    assert not (CONFIG.parent / "config.yaml.tmp").exists()
+    assert not [n for n in os.listdir(CONFIG.parent) if n.endswith(".tmp")]
 
 
 def test_each_save_keeps_a_copy_of_the_previous_file(host):

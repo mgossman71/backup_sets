@@ -29,9 +29,13 @@ def _flag(path):
         return None
 
 
+FLAG_HOLDERS = (b"backup.sh", b"host/cleanup.py")
+
+
 def _running_pid_alive(path):
-    """Same rule as backup.sh: the running flag holds the PID of the run that made it.
-    Returns (active, pid). A flag without a PID is treated as active."""
+    """The running flag holds the PID of the backup.sh (or host/cleanup.py) process that made it.
+    Returns (active, pid). A flag without a PID is treated as active. Same rule as backup.sh,
+    host/actions.sh and host/cleanup.py (tests/shell/test_running_flag_parity.py)."""
     try:
         with open(hostpath(path)) as f:
             pid = "".join(c for c in f.read(32) if c.isdigit())
@@ -41,7 +45,8 @@ def _running_pid_alive(path):
         return True, None
     try:
         with open(hostpath(f"/proc/{pid}/cmdline"), "rb") as f:
-            return b"backup.sh" in f.read(), pid
+            cmd = f.read()
+        return any(h in cmd for h in FLAG_HOLDERS), pid
     except (OSError, ValueError):
         return False, pid
 
@@ -54,6 +59,12 @@ def flags(cfg):
         if not active:
             # left behind by a run that crashed: the next backup removes it
             stale, running = dict(running, pid=pid), None
+        else:
+            try:
+                with open(hostpath(cfg["running_flag"])) as f:
+                    running["by"] = "cleanup" if "cleanup" in f.read(64) else "backup"
+            except (OSError, ValueError):
+                running["by"] = "backup"
     return {
         "running": running,
         "stale_running": stale,

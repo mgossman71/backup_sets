@@ -12,6 +12,7 @@ from helpers import ACTIONS_SH, BackupEnv, tree, write_tree
 
 STUB = """#!/bin/bash
 # test stand-in for systemd-run: apply --setenv, ignore other options, run synchronously
+echo "ARGS $*" >> "$STUB_LOG.args"
 while [ $# -gt 0 ]; do
   case "$1" in
     --setenv=*) kv="${1#--setenv=}"; export "${kv%%=*}"="${kv#*=}" ;;
@@ -316,3 +317,14 @@ def test_removal_allowed_despite_stale_running_flag(br):
     rid = br.remove_request("Drop")
     br.process()
     assert br.status(rid)["status"] == "done"
+
+
+def test_run_unit_names_are_unique_within_a_second(br):
+    """Regression: units were named backup-sets-portal-<epoch seconds>, so two runs started in
+    the same second collided and the second one silently failed to start."""
+    for _ in range(3):
+        br.request("run")
+        br.process()
+    units = [a for line in (br.root / "stub.log.args").read_text().splitlines()
+             for a in line.split() if a.startswith("--unit=backup-sets-portal-")]
+    assert len(units) == 3 and len(set(units)) == 3

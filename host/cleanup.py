@@ -33,8 +33,14 @@ def now_str():
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
+# Programs that may hold the running flag. The same rule is implemented in backup.sh
+# (running_flag_active), host/actions.sh (backup_running) and portal/app/status.py
+# (_running_pid_alive); tests/shell/test_running_flag_parity.py keeps all four in step.
+FLAG_HOLDERS = (b"backup.sh", b"host/cleanup.py")
+
+
 def backup_running(flag):
-    """True if the running flag belongs to a live backup.sh process (same rule as backup.sh).
+    """True if the running flag belongs to a live backup.sh or cleanup process.
     A stale flag left by a crashed run does not count; a flag without a PID does."""
     if not flag or not os.path.lexists(flag):
         return False
@@ -47,9 +53,40 @@ def backup_running(flag):
         return True
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
-            return b"backup.sh" in f.read()
+            cmd = f.read()
+        return any(h in cmd for h in FLAG_HOLDERS)
     except OSError:
         return False
+
+
+def take_running_flag(flag):
+    """Create the running flag for this cleanup (atomically), so no backup starts while
+    files are being deleted. A stale flag is replaced. Returns True if we hold it."""
+    for _ in range(2):
+        try:
+            fd = os.open(flag, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            if backup_running(flag):
+                return False
+            try:
+                os.unlink(flag)  # stale: its process is gone
+            except FileNotFoundError:
+                pass
+            continue
+        with os.fdopen(fd, "w") as f:
+            f.write(f"{os.getpid()} cleanup\n")
+        return True
+    return False
+
+
+def release_running_flag(flag):
+    """Remove the running flag only if this process holds it."""
+    try:
+        with open(flag) as f:
+            if f.read(32).split()[:1] == [str(os.getpid())]:
+                os.unlink(flag)
+    except (OSError, IndexError):
+        pass
 
 
 class Run:
@@ -92,19 +129,32 @@ class Run:
                 self.plan = json.load(f)
         except (OSError, ValueError):
             return self.fail("cleanup plan not found or unreadable")
+        if not isinstance(self.plan, dict):
+            self.plan = {}
+            return self.fail("cleanup plan is malformed")
         p = self.plan
-        if time.time() - float(p.get("created", 0)) > PLAN_MAX_AGE:
+        try:
+            created = float(p.get("created"))
+        except (TypeError, ValueError):
+            return self.fail("cleanup plan is malformed (no valid creation time)")
+        if time.time() - created > PLAN_MAX_AGE:
             return self.fail("the comparison is more than an hour old - run it again")
+        items = p.get("items")
+        if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+            return self.fail("cleanup plan is malformed (items must be a list)")
+        source, destination = p.get("source"), p.get("destination")
+        if not isinstance(source, str) or not isinstance(destination, str) or not source or not destination:
+            return self.fail("cleanup plan is malformed (source/destination missing)")
 
         try:
             with open(self.config_path) as f:
                 cfg = yaml.safe_load(f) or {}
         except (OSError, yaml.YAMLError) as e:
             return self.fail(f"cannot read config.yaml: {e}")
-        if backup_running(cfg.get("running_flag")):
+        flag = cfg.get("running_flag")
+        if backup_running(flag):
             return self.fail("a backup is running - try again when it finishes")
 
-        source, destination = p.get("source"), p.get("destination")
         entry = next((b for b in cfg.get("backups") or []
                       if b.get("source") == source and b.get("destination") == destination), None)
         if not entry or not source or not destination:
@@ -129,7 +179,16 @@ class Run:
         else:
             protected = set()
 
-        items = p.get("items") or []
+        # hold the running flag while deleting, so a scheduled backup can't start mid-cleanup
+        if flag and not take_running_flag(flag):
+            return self.fail("a backup is running - try again when it finishes")
+        try:
+            return self._delete(items, source, base, protected)
+        finally:
+            if flag:
+                release_running_flag(flag)
+
+    def _delete(self, items, source, base, protected):
         self.log(f"of {base} started by {self.user}: {len(items)} item(s) to check")
         self.write_status("running", f"Checking and deleting {len(items)} item(s)…")
         last = time.time()
@@ -141,7 +200,9 @@ class Run:
                 self.write_status("running", f"Deleted {len(self.deleted)} of {len(items)}…")
                 last = time.time()
 
-        audit = self.status_path.replace(".status.json", ".deleted.txt")
+        suffix = ".status.json"
+        stem = self.status_path[:-len(suffix)] if self.status_path.endswith(suffix) else self.status_path
+        audit = stem + ".deleted.txt"
         with open(audit, "w") as f:
             f.write("".join(f"{x}\n" for x in self.deleted))
         msg = f"Deleted {len(self.deleted)} item(s), freed {self.freed} bytes"

@@ -9,6 +9,8 @@ from .settings import hostpath
 
 CACHE_TTL = 6 * 3600
 SCAN_BUDGET = 45          # seconds per request; unfinished folders are sized on the next call
+MAX_WALKS_PER_REQUEST = 5000  # bounds work per request (Movies needs ~2,500: 1,240 folders x 2 sides)
+SQL_CHUNK = 500
 _pool = ThreadPoolExecutor(max_workers=8)
 _schema_lock = threading.Lock()
 _schema_done = False
@@ -84,10 +86,13 @@ def scan(source, destination, refresh=False):
 
     paths = [os.path.join(source, n) for n in src_dirs] + [os.path.join(dest_base, n) for n in dest_dirs]
     now = time.time()
+    cached = {}
     with connect() as conn:
-        cached = {r["path"]: r for r in conn.execute(
-            "SELECT path, size, files, ts FROM folder_sizes WHERE path IN (%s)" % ",".join("?" * len(paths)),
-            paths)} if paths else {}
+        for i in range(0, len(paths), SQL_CHUNK):
+            chunk = paths[i:i + SQL_CHUNK]
+            for r in conn.execute("SELECT path, size, files, ts FROM folder_sizes WHERE path IN (%s)"
+                                  % ",".join("?" * len(chunk)), chunk):
+                cached[r["path"]] = r
     sizes, todo = {}, []
     for p in paths:
         r = cached.get(p)
@@ -97,7 +102,7 @@ def scan(source, destination, refresh=False):
             todo.append(p)
 
     deadline = time.time() + SCAN_BUDGET
-    futures = {p: _pool.submit(_walk_size, hostpath(p), deadline) for p in todo}
+    futures = {p: _pool.submit(_walk_size, hostpath(p), deadline) for p in todo[:MAX_WALKS_PER_REQUEST]}
     fresh = []
     for p, fut in futures.items():
         try:
