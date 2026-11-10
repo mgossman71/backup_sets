@@ -302,14 +302,90 @@ test("selections: cancel and discard leave the selection unchanged", async () =>
   assert.equal(p.$("#save").disabled, true);
 });
 
-test("selections: filter and sort", async () => {
+test("selections: filter", async () => {
   const p = await loadPage("selections");
   await openPicker(p);
   p.$("#pk-filter").value = "small"; p.fire(p.$("#pk-filter"), "input");
   assert.deepEqual(p.$$("#pk-rows .name").map((e) => e.textContent), ["Small Show"]);
-  p.$("#pk-filter").value = ""; p.fire(p.$("#pk-filter"), "input");
-  p.$("#pk-sort").value = "size"; p.fire(p.$("#pk-sort"), "change");
-  assert.equal(p.$$("#pk-rows .name")[0].textContent, "Big Show");
+});
+
+/* Fixture sizes - in source: Big Show 8000, New Show 700, Small Show 100, Show [x] 10, <img…> 1.
+   On the backup disk: Big Show 8000, Small Show 100, Show [x] 10 (New Show and <img…> not copied). */
+const XSS = '<img src=x onerror="window.__xss=1">';
+const names = (p) => p.$$("#pk-rows .name").map((e) => e.textContent);
+const sortBtn = (p, key) => p.$(`#picker .th-sort[data-key="${key}"]`);
+const ariaSort = (p) => Object.fromEntries(["name", "src", "dest"].map((k) => [k, sortBtn(p, k).parentElement.getAttribute("aria-sort")]));
+
+test("picker sort: column headings are the sort controls; name A-Z by default", async () => {
+  const p = await loadPage("selections");
+  await openPicker(p);
+  assert.equal(p.$("#pk-sort"), null, "no separate sort dropdown");
+  assert.equal(sortBtn(p, "name").tagName, "BUTTON", "headings are real buttons (keyboard + screen reader)");
+  assert.deepEqual(names(p), [XSS, "Big Show", "New Show", "Show [x]", "Small Show"]);
+  assert.deepEqual(ariaSort(p), { name: "ascending", src: "none", dest: "none" });
+  assert.match(sortBtn(p, "name").textContent, /▲/);
+});
+
+test("picker sort: Size in source - largest first, click again for smallest first", async () => {
+  const p = await loadPage("selections");
+  await openPicker(p);
+  sortBtn(p, "src").click();
+  assert.deepEqual(names(p), ["Big Show", "New Show", "Small Show", "Show [x]", XSS]);
+  assert.deepEqual(ariaSort(p), { name: "none", src: "descending", dest: "none" });
+  assert.match(sortBtn(p, "src").textContent, /▼/);
+  assert.doesNotMatch(sortBtn(p, "name").textContent, /[▲▼]/);
+  assert.match(sortBtn(p, "name").textContent, /↕/, "other sortable columns show ↕");
+  sortBtn(p, "src").click();
+  assert.deepEqual(names(p), [XSS, "Show [x]", "Small Show", "New Show", "Big Show"]);
+  assert.equal(ariaSort(p).src, "ascending");
+});
+
+test("picker sort: On backup disk - folders not copied yet always go last", async () => {
+  const p = await loadPage("selections");
+  await openPicker(p);
+  sortBtn(p, "dest").click();
+  assert.deepEqual(names(p), ["Big Show", "Small Show", "Show [x]", XSS, "New Show"]);
+  sortBtn(p, "dest").click();
+  assert.deepEqual(names(p), ["Show [x]", "Small Show", "Big Show", XSS, "New Show"]);
+});
+
+test("picker sort: Folder heading toggles A-Z / Z-A", async () => {
+  const p = await loadPage("selections");
+  await openPicker(p);
+  sortBtn(p, "src").click();
+  sortBtn(p, "name").click();
+  assert.deepEqual(names(p), [XSS, "Big Show", "New Show", "Show [x]", "Small Show"]);
+  sortBtn(p, "name").click();
+  assert.deepEqual(names(p), ["Small Show", "Show [x]", "New Show", "Big Show", XSS]);
+  assert.equal(ariaSort(p).name, "descending");
+});
+
+test("picker sort: keeps checkboxes, works with the filter, and starts at the top", async () => {
+  const p = await loadPage("selections");
+  await openPicker(p);
+  uncheck(p, "Big Show");
+  const scroller = p.$("#picker .modal .body");
+  let top = 0;
+  Object.defineProperty(scroller, "scrollTop", { get: () => top, set: (v) => { top = v; }, configurable: true });
+  scroller.scrollTop = 500;
+  sortBtn(p, "src").click();
+  assert.equal(scroller.scrollTop, 0, "a new order starts at the top");
+  assert.equal(pickerRow(p, "Big Show").querySelector("input").checked, false, "selection survives sorting");
+  assert.equal(pickerRow(p, "Big Show").className, "off");
+  p.$("#pk-filter").value = "show"; p.fire(p.$("#pk-filter"), "input");
+  assert.deepEqual(names(p), ["Big Show", "New Show", "Small Show", "Show [x]"]);
+  p.$("#pk-apply").click();
+  assert.match(p.$$(".sel-summary")[0].textContent, /all except 1 \(Big Show\)/);
+});
+
+test("picker sort: the chosen order is kept when the picker is reopened", async () => {
+  const p = await loadPage("selections");
+  await openPicker(p);
+  sortBtn(p, "src").click();
+  p.$("#pk-cancel").click();
+  await openPicker(p);
+  assert.equal(names(p)[0], "Big Show");
+  assert.equal(ariaSort(p).src, "descending");
 });
 
 test("selections: no Remove button until the deselection is saved", async () => {

@@ -459,6 +459,12 @@ shows under TV-Shows. On the portal's **Backup selections** page, click **Choose
 The picker lists every top-level folder with its size in the source and on the backup disk, and shows
 whether the selection fits in the destination's free space.
 
+Click a column heading (**Folder**, **Size in source**, **On backup disk**) to sort by it, and click
+again to reverse. ▲ means smallest/A first and ▼ means largest/Z first; ↕ marks the other sortable
+columns. Sizes sort largest first on the first click, and folders not yet on the backup disk always
+sort last. Sorting keeps your checkboxes and works together with the filter box, and the order is kept
+when you reopen the picker. Sizes use binary units (KiB, MiB, GiB, TiB), so check the unit when comparing.
+
 Two modes:
 - **Everything except unchecked** (`exclude:`). New folders added to the source later are backed up automatically.
 - **Only checked folders** (`include:`). New folders are not backed up until you check them. Loose files at the

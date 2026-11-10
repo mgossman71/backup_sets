@@ -6,6 +6,8 @@ function createFolderPicker() {
   let entry = null, onApply = null, data = null, checked = new Set();
   let mode = "exclude", rootFiles = true, initialised = false;
   let pollTimer = null, lastFocus = null;
+  // column sort: kept while the page is open, so reopening the picker keeps your choice
+  let sortKey = "name", sortDir = 1;
 
   const srcFolders = () => (data ? data.folders.filter(f => f.in_source) : []);
   const orphans = () => (data ? data.folders.filter(f => !f.in_source) : []);
@@ -68,6 +70,31 @@ function createFolderPicker() {
     return wrap;
   }
 
+  /* Sort by name or size. Folders whose size is unknown (still measuring, or not on the
+     backup disk) always go last, whichever direction is chosen. */
+  function sortFolders(list) {
+    const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
+    const size = (f) => (sortKey === "src" ? f.src_size : f.on_dest ? f.dest_size : null);
+    return [...list].sort((a, b) => {
+      if (sortKey === "name") return sortDir * byName(a, b);
+      const x = size(a), y = size(b);
+      if (x === null || x === undefined) return (y === null || y === undefined) ? byName(a, b) : 1;
+      if (y === null || y === undefined) return -1;
+      return sortDir * (x - y) || byName(a, b);
+    });
+  }
+
+  function renderSortHeaders() {
+    document.querySelectorAll("#picker .th-sort").forEach((b) => {
+      const on = b.dataset.key === sortKey;
+      b.parentElement.setAttribute("aria-sort", on ? (sortDir === 1 ? "ascending" : "descending") : "none");
+      const arrow = b.querySelector(".sort-arrow");
+      arrow.textContent = on ? (sortDir === 1 ? " ▲" : " ▼") : " ↕";  // ↕ marks a column you can sort by
+      arrow.classList.toggle("idle", !on);
+      b.title = "Sort by " + b.textContent.replace(/[▲▼↕ ]+$/, "").toLowerCase();
+    });
+  }
+
   function render() {
     document.querySelectorAll("#pk-mode button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
     $("#pk-mode-help").textContent = mode === "exclude"
@@ -81,10 +108,11 @@ function createFolderPicker() {
     // to the top - so remember where the user was and put them back there.
     const scroller = back.querySelector(".modal .body");
     const scrollTop = scroller ? scroller.scrollTop : 0;
+    renderSortHeaders();
     const tb = clear($("#pk-rows"));
     const q = $("#pk-filter").value.trim().toLowerCase();
     let list = srcFolders().filter(f => !q || f.name.toLowerCase().includes(q));
-    if ($("#pk-sort").value === "size") list = [...list].sort((a, b) => (b.src_size || 0) - (a.src_size || 0));
+    list = sortFolders(list);
     for (const f of list) {
       const cb = el("input", { type: "checkbox", "aria-label": "Back up " + f.name });
       cb.checked = checked.has(f.name);
@@ -211,7 +239,14 @@ function createFolderPicker() {
   document.querySelectorAll("#pk-mode button").forEach(b => b.addEventListener("click", () => { mode = b.dataset.mode; render(); }));
   $("#pk-root").addEventListener("change", (e) => { rootFiles = e.target.checked; render(); });
   $("#pk-filter").addEventListener("input", render);
-  $("#pk-sort").addEventListener("change", render);
+  document.querySelectorAll("#picker .th-sort").forEach((b) => b.addEventListener("click", () => {
+    const key = b.dataset.key;
+    if (key === sortKey) sortDir = -sortDir;
+    else { sortKey = key; sortDir = key === "name" ? 1 : -1; }  // sizes start largest first
+    render();
+    const scroller = back.querySelector(".modal .body");
+    if (scroller) scroller.scrollTop = 0;  // a new order starts at the top
+  }));
   const visible = () => srcFolders().filter(f => { const q = $("#pk-filter").value.trim().toLowerCase(); return !q || f.name.toLowerCase().includes(q); });
   $("#pk-all").addEventListener("click", () => { visible().forEach(f => checked.add(f.name)); render(); });
   $("#pk-none").addEventListener("click", () => { visible().forEach(f => checked.delete(f.name)); render(); });

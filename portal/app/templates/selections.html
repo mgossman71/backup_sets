@@ -97,7 +97,6 @@
       <label class="check small" id="pk-root-wrap"><input type="checkbox" id="pk-root"> <span id="pk-root-label"></span></label>
       <div class="row">
         <input type="text" id="pk-filter" placeholder="Filter folders…" aria-label="Filter folders">
-        <select id="pk-sort" aria-label="Sort"><option value="name">Sort by name</option><option value="size">Sort by size</option></select>
         <button type="button" id="pk-all">Check all</button>
         <button type="button" id="pk-none">Uncheck all</button>
         <span class="spacer"></span>
@@ -108,7 +107,11 @@
     <div class="body">
       <div class="table-wrap">
         <table class="pk-table">
-          <thead><tr><th>Folder</th><th class="num">Size in source</th><th class="num">On backup disk</th><th>Status</th></tr></thead>
+          <thead><tr>
+            <th aria-sort="ascending"><button type="button" class="th-sort" data-key="name">Folder<span class="sort-arrow" aria-hidden="true"></span></button></th>
+            <th class="num" aria-sort="none"><button type="button" class="th-sort" data-key="src">Size in source<span class="sort-arrow" aria-hidden="true"></span></button></th>
+            <th class="num" aria-sort="none"><button type="button" class="th-sort" data-key="dest">On backup disk<span class="sort-arrow" aria-hidden="true"></span></button></th>
+            <th>Status</th></tr></thead>
           <tbody id="pk-rows"></tbody>
         </table>
       </div>
