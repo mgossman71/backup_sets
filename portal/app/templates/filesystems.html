@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Filesystems{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Filesystems</h1>
+  <span class="spacer"></span>
+  <span class="small muted" id="updated"></span>
+</div>
+
+<div id="alerts"></div>
+
+<section class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Mount</th><th>Used</th><th class="num">Size</th><th class="num">Used</th><th class="num">Free</th><th>Status</th><th class="num">Growth</th><th class="num">Full in</th><th>Role</th></tr></thead>
+      <tbody id="fs-rows"></tbody>
+    </table>
+  </div>
+  <p class="small muted">"Full in" is a straight-line projection. It uses hourly usage snapshots once there are 2+ days of them; before that, it uses how fast the backed-up sources have been growing.</p>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Usage over time</h2><span class="spacer"></span>
+    <div class="seg" id="range" role="group" aria-label="Date range">
+      <button data-days="1">24 hours</button>
+      <button data-days="7" aria-pressed="true">7 days</button>
+      <button data-days="30">30 days</button>
+      <button data-days="365">1 year</button>
+    </div>
+  </div>
+  <div id="lg-trend"></div>
+  <div id="ch-trend"></div>
+  <p class="small muted">Percent used, from hourly snapshots taken by the portal (collection starts when the portal is installed).</p>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='filesystems.js') }}?v={{ asset_v }}"></script>{% endblock %}

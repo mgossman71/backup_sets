@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Backup selections{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Backup selections</h1>
+  <span class="spacer"></span>
+  <span class="small muted" id="cfg-path"></span>
+</div>
+<p class="ink2">Each source folder is copied into its destination, as <span class="mono">destination/&lt;folder name&gt;</span>. Backups run one after another, in this order.</p>
+
+<div id="load-error"></div>
+
+<section class="card" aria-labelledby="b-h">
+  <div class="card-head">
+    <h2 id="b-h">Backups</h2><span class="spacer"></span>
+    <button id="add-backup">+ Add backup</button>
+  </div>
+  <div id="backups"></div>
+</section>
+
+<section class="card" id="schedule" aria-labelledby="sch-h">
+  <div class="card-head">
+    <h2 id="sch-h">Schedule</h2><span class="spacer"></span>
+    <label class="check"><input type="checkbox" id="sch-enabled"> Automatic backups</label>
+  </div>
+  <div id="sch-notes"></div>
+  <div class="sch-form" id="sch-form">
+    <label class="sch-field">Run
+      <select id="sch-kind">
+        <option value="daily">Every day</option>
+        <option value="weekdays">On selected days</option>
+        <option value="hours">Every few hours</option>
+        <option value="advanced">Custom (cron)</option>
+      </select>
+    </label>
+    <label class="sch-field" id="sch-time-wrap">at <input type="time" id="sch-time" value="02:00" step="60"> <span class="small muted" id="sch-tz">server time</span></label>
+    <div class="sch-field" id="sch-days" role="group" aria-label="Days of the week"></div>
+    <label class="sch-field" id="sch-every-wrap">every
+      <select id="sch-every"><option>1</option><option>2</option><option>3</option><option>4</option><option>6</option><option>8</option><option>12</option></select>
+      hour(s), at minute <input type="text" id="sch-minute" value="0" inputmode="numeric" class="sch-num" aria-label="Minute past the hour"></label>
+    <label class="sch-field" id="sch-expr-wrap">cron
+      <input type="text" id="sch-expr" class="path sch-expr" spellcheck="false" placeholder="0 2 * * *" aria-label="Cron expression">
+      <span class="small muted">minute hour day month weekday</span></label>
+  </div>
+  <div class="small" id="sch-preview" aria-live="polite"></div>
+  <div class="row sch-actions">
+    <button type="button" class="primary" id="sch-save" disabled>Save schedule</button>
+    <span class="small ink2" id="sch-status" aria-live="polite"></span>
+  </div>
+  <p class="small muted">The schedule is saved to root's crontab right away. It runs every backup set above, in order. A run that starts while another is still going is skipped.</p>
+</section>
+
+<div class="grid cols-2">
+  <section class="card" aria-labelledby="m-h">
+    <div class="card-head"><h2 id="m-h">Required mount points</h2><span class="spacer"></span><button id="add-mount">+ Add</button></div>
+    <p class="small ink2">Backups won't start unless every one of these is mounted. That keeps rsync from filling the root disk when a USB drive is missing.</p>
+    <div class="chip-list" id="mounts"></div>
+  </section>
+  <section class="card" aria-labelledby="r-h">
+    <div class="card-head"><h2 id="r-h">rsync options</h2></div>
+    <input type="text" id="rsync-opts" class="path" spellcheck="false" aria-labelledby="r-h">
+    <p class="small ink2">Passed to every rsync run. <span class="mono">-a</span> keeps permissions and timestamps; <span class="mono">--stats</span> is needed for history metrics. Remote-shell options are blocked here.</p>
+  </section>
+</div>
+
+<div class="savebar" id="savebar">
+  <span id="dirty-note" class="ink2">No unsaved changes</span>
+  <span class="spacer"></span>
+  <button id="revert" disabled>Discard changes</button>
+  <button id="save" class="primary" disabled>Save to config.yaml</button>
+</div>
+<div id="messages" aria-live="polite"></div>
+<p class="small muted" id="copies"></p>
+
+<div class="modal-backdrop" id="browser" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="br-h">
+    <header><h2 id="br-h">Choose a folder</h2></header>
+    <div class="crumbs" id="br-crumbs"></div>
+    <div class="body"><div class="dirlist" id="br-list"></div></div>
+    <footer>
+      <span class="mono small ink2" id="br-current"></span>
+      <span class="spacer"></span>
+      <button id="br-cancel">Cancel</button>
+      <button id="br-select" class="primary">Select this folder</button>
+    </footer>
+  </div>
+</div>
+<div class="modal-backdrop" id="picker" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="pk-h">
+    <header><div><h2 id="pk-h">Choose folders</h2><div class="small muted mono" id="pk-sub"></div></div></header>
+    <div class="pk-controls">
+      <div class="seg" id="pk-mode" role="group" aria-label="Selection mode">
+        <button type="button" data-mode="exclude">Everything except unchecked</button>
+        <button type="button" data-mode="include">Only checked folders</button>
+      </div>
+      <p class="small ink2" id="pk-mode-help"></p>
+      <label class="check small" id="pk-root-wrap"><input type="checkbox" id="pk-root"> <span id="pk-root-label"></span></label>
+      <div class="row">
+        <input type="text" id="pk-filter" placeholder="Filter folders…" aria-label="Filter folders">
+        <select id="pk-sort" aria-label="Sort"><option value="name">Sort by name</option><option value="size">Sort by size</option></select>
+        <button type="button" id="pk-all">Check all</button>
+        <button type="button" id="pk-none">Uncheck all</button>
+        <span class="spacer"></span>
+        <button type="button" id="pk-refresh">Refresh sizes</button>
+      </div>
+      <div class="small muted" id="pk-status"></div>
+    </div>
+    <div class="body">
+      <div class="table-wrap">
+        <table class="pk-table">
+          <thead><tr><th>Folder</th><th class="num">Size in source</th><th class="num">On backup disk</th><th>Status</th></tr></thead>
+          <tbody id="pk-rows"></tbody>
+        </table>
+      </div>
+      <div id="pk-orphans" class="pk-orphans"></div>
+    </div>
+    <div class="pk-fit" id="pk-fit" aria-live="polite"></div>
+    <footer>
+      <button type="button" id="pk-cancel">Cancel</button>
+      <button type="button" class="primary" id="pk-apply">Apply selection</button>
+    </footer>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="pk-confirm" hidden>
+  <div class="modal narrow" role="alertdialog" aria-modal="true" aria-labelledby="pkc-h">
+    <header><h2 id="pkc-h">Remove from backup disk?</h2></header>
+    <div class="body pad">
+      <p id="pkc-text"></p>
+      <label class="confirm-label">Type <b id="pkc-name" class="mono"></b> to confirm
+        <input type="text" id="pkc-input" class="path" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <footer>
+      <button type="button" id="pkc-cancel">Cancel</button>
+      <button type="button" class="danger-solid" id="pkc-go" disabled>Delete backup copy</button>
+    </footer>
+  </div>
+</div>
+<div class="modal-backdrop" id="cleanup" hidden>
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="cu-h">
+    <header><div><h2 id="cu-h">Backup Folder Cleanup</h2><div class="small muted" id="cu-sub"></div></div></header>
+    <div class="body pad" id="cu-body"></div>
+    <div class="pk-fit" id="cu-confirm" hidden>
+      <label class="confirm-label">Type <b id="cu-name" class="mono"></b> to confirm
+        <input type="text" id="cu-input" class="path" autocomplete="off" spellcheck="false"></label>
+      <p class="small ink2">Only items listed above are deleted. The server checks each one again first and skips anything that is back in the source.</p>
+    </div>
+    <footer>
+      <button type="button" id="cu-close">Close</button>
+      <button type="button" class="danger-solid" id="cu-go" disabled>Delete</button>
+    </footer>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='folderpicker.js') }}?v={{ asset_v }}"></script>
+<script src="{{ url_for('static', filename='cleanup.js') }}?v={{ asset_v }}"></script>
+<script src="{{ url_for('static', filename='schedule.js') }}?v={{ asset_v }}"></script>
+<script src="{{ url_for('static', filename='selections.js') }}?v={{ asset_v }}"></script>
+{% endblock %}

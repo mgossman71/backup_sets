@@ -1,0 +1,3 @@
+config_backups/
+*.tmp
+__pycache__/

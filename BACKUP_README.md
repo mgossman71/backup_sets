@@ -392,3 +392,173 @@ backups:
 6. **Error propagation**: If any backup fails, all stop and flag is set
 7. **Configuration validation**: Checks for required settings and valid YAML
 8. **Dependency check**: Verifies yq is installed before running
+
+## Web Portal
+
+A web portal for managing backup selections, viewing backup history and metrics, and watching how full each filesystem is.
+
+```
+browser ──HTTPS :8443──▶ backup-portal container (Flask/gunicorn)
+                           reads host / (read-only) → df, mount table, flags, log, accounts
+                           edits /opt/backup_sets/config.yaml
+                           writes /var/lib/backup_sets (history index, action requests)
+                                       │  request files
+                                       ▼
+                 host: backup-portal-actions.path → host/actions.sh
+                       (run backup.sh / pause / resume / clear fail flag)
+```
+
+The container never runs rsync and never writes to `/mnt`. Backups still run on the host
+from cron, exactly as before. "Run now", "Pause", and "Clear failed" go through
+a small systemd path unit on the host.
+
+### Install / start
+```bash
+sudo bash /opt/backup_sets/host/install.sh      # state dir, systemd bridge, TLS cert, history backfill, logrotate
+cd /opt/backup_sets && sudo docker compose up -d --build
+```
+Then open **https://<server-ip>:8443**. The certificate is self-signed (in `/var/lib/backup_sets/tls/`),
+so your browser will warn the first time. Replace `cert.pem`/`key.pem` with your own certificate if you have one.
+
+### Sign in
+Use a local Linux account on the server. Accounts are allowed if they're in the `sudo` group (`ALLOWED_GROUP`)
+or listed in `ALLOWED_USERS` in `docker-compose.yml`. Passwords are checked against the host's
+`/etc/shadow`, so password changes apply immediately. Locked accounts (e.g. root with no password) cannot sign in.
+Repeated failures from one IP are rate-limited (5 per 5 minutes).
+
+### Pages
+- **Dashboard**: status (healthy / running / failed / paused), next scheduled run, Run now / Pause / Resume /
+  Clear failed buttons, the last run's per-job results, backup filesystem fullness, and a live log tail.
+- **Backup selections**: add, edit, reorder, or remove source → destination pairs, with a folder browser
+  (limited to `/mnt`). You can also edit required mount points and rsync options. Saves are validated (paths exist,
+  no two sources writing to the same folder, no remote-shell rsync options). Each save keeps a copy of the
+  previous file in `config_backups/`.
+- **History**: every run with per-job rsync stats. Charts show data copied per day, run outcomes, run duration,
+  and source size growth.
+- **Filesystems**: every real filesystem with size, used, and free space, warnings at 85% and 95%, growth rate, and a
+  projected "full in" time. The portal records a usage snapshot every hour for the trend chart.
+
+### History records
+`backup.sh` now appends one JSON line per job and one per run to `history_file`
+(default `/var/lib/backup_sets/history.jsonl`; requires `jq`). Runs from before this change were
+imported once from the text log by `tools/backfill_history.py` into `history_backfill.jsonl`.
+The portal indexes both files into `/var/lib/backup_sets/portal.db`.
+
+`backup.sh` also accepts two environment overrides: `BACKUP_CONFIG=/path/to/config.yaml` and
+`BACKUP_TRIGGER=<label>` (recorded as the run's trigger; defaults to `cron`, or `manual` from a terminal).
+
+### Troubleshooting
+- Portal logs: `docker logs backup-portal`
+- Buttons say "Requests are still waiting": check `systemctl status backup-portal-actions.path`
+- Action audit trail: lines starting with `Portal action:` in the backup log
+
+## Choosing Which Folders Get Backed Up
+
+Each backup entry can be limited to some of its top-level folders, for example individual
+shows under TV-Shows. On the portal's **Backup selections** page, click **Choose folders…** on an entry.
+The picker lists every top-level folder with its size in the source and on the backup disk, and shows
+whether the selection fits in the destination's free space.
+
+Two modes:
+- **Everything except unchecked** (`exclude:`). New folders added to the source later are backed up automatically.
+- **Only checked folders** (`include:`). New folders are not backed up until you check them. Loose files at the
+  top level are copied too unless `include_root_files: false`.
+
+In `config.yaml`:
+```yaml
+backups:
+  - source: /mnt/SharedVol/TV-Shows
+    destination: /mnt/usb_chassis/singleusb
+    exclude:
+      - Chicago Fire
+      - Gossip Girl
+
+  - source: /mnt/SharedVol/Data
+    destination: /mnt/usb_chassis/singleusb
+    include:
+      - BusinessDocs
+      - BOOKS
+    include_root_files: false
+```
+An entry with neither key backs up everything. Using both keys on one entry is an error.
+`backup.sh` turns the list into an rsync filter (`--filter="merge …"`), anchored to the top level, so a
+nested folder with the same name is not affected.
+
+### Freeing space on the backup disk
+Deselecting a folder only stops future copying. The existing copy stays on the backup disk. To delete it,
+open the picker again after saving and click **Remove copy** next to the folder, then type the folder name to confirm.
+Folders that are on the backup disk but no longer in the source are listed too, and can be removed the same way.
+
+The host re-checks every removal against the **saved** `config.yaml` before deleting anything. The folder must
+be deselected for that backup entry (or gone from the source), must be a real directory directly inside
+`<destination>/<source folder name>/`, and no backup can be running. The source is never touched.
+Every removal is logged as a `Portal action:` line in the backup log.
+
+### Scheduling
+The **Schedule** card on the portal's **Backup selections** page sets when backups run automatically:
+every day at a time, on selected days, every few hours, or a custom cron expression. It also has an
+**Automatic backups** on/off switch. Times are in the server's time zone (set to America/Chicago with
+`timedatectl set-timezone`; cron follows it, including daylight saving). The preview also shows your browser's
+local time. One schedule runs every backup set, in order. A run that starts while another is still
+going is skipped.
+
+Saving applies the schedule to root's crontab right away. The host (`host/schedule.py`) only ever rewrites
+its own marked block:
+```
+# BEGIN backup_sets schedule (managed by the backup portal - change it there)
+0 2 * * * bash /opt/backup_sets/backup.sh >> /var/log/backup_sets_cron.log 2>&1
+# END backup_sets schedule
+```
+- Turning automatic backups off comments out the line inside the block, so the schedule is remembered.
+- The portal only supplies the 5 time fields, and the host validates them again. The command is fixed by the host.
+- Any other *active* line that runs this `backup.sh` is commented out (prefixed `#[moved to portal schedule]`),
+  so backups never run twice. Other crontab lines are never changed.
+- If `crontab` rejects the change, the existing crontab is left as it was and the portal shows the error.
+
+### Backup Folder Cleanup
+Backups never delete anything on their own (rsync runs without `--delete`), so files you delete from a
+source stay in its backup. Each backup set on **Backup selections** has a **Backup Folder Cleanup**
+button that removes them:
+
+1. **Compare.** Lists everything in `<destination>/<source folder name>/` that no longer exists in the
+   source, at any depth, with sizes. Nothing is deleted yet. Folders you deselected but that still exist
+   in the source are protected and listed as such.
+2. **Confirm.** Type the backup set's folder name (e.g. `TV-Shows`) to enable **Delete**. If the cleanup
+   would remove more than 25% of the backup, a warning is shown first.
+3. **Delete.** The host (`host/cleanup.py`) re-checks every listed item before deleting it. It only deletes
+   items that still exist in the backup, are still missing from the source, are not protected, and whose
+   parent folders are real folders inside the backup (no symlinks). It refuses the whole cleanup if the
+   source folder is missing or **empty** (usually an unmounted disk), if a backup is running, or if the
+   comparison is more than an hour old.
+
+The button is only enabled for a backup set that is saved with no unsaved changes. Each cleanup is logged
+in the backup log; the full list of deleted paths is kept in `/var/lib/backup_sets/cleanup/<id>.deleted.txt`.
+
+## Tests
+
+Run the whole suite before every change goes live:
+```bash
+cd /opt/backup_sets && ./test.sh            # everything (~1 minute)
+./test.sh -k selection                      # only tests whose name matches
+./test.sh tests/shell/test_actions.py       # one file
+```
+`./test.sh` builds a test image (same rsync / jq / yq versions as the server) and runs the tests in a
+container with **no network** and the repository mounted **read-only**. Every test works in its own
+temporary directories, so the real config, flags, logs and disks are never touched. It exits non-zero
+if anything fails.
+
+| Area | File | What it covers |
+|---|---|---|
+| backup.sh | `tests/shell/test_backup.py` | copying, history records, stop / running / fail flags, mount checks, failures, concurrent starts, interrupts, include/exclude selection (odd names, wildcards, nested folders) |
+| Action bridge | `tests/shell/test_actions.py` | run / pause / resume / clear requests, and every safety rule for removing folders from a backup disk |
+| Cleanup (host) | `tests/shell/test_cleanup.py` | every safety rule of Backup Folder Cleanup |
+| Cleanup (portal) | `tests/portal/test_cleanup_api.py` | the comparison, protected folders, confirmation and refusals |
+| Schedule (host) | `tests/shell/test_schedule.py` | crontab block rewriting, other lines untouched, injection attempts refused |
+| Schedule (portal) | `tests/portal/test_schedule_api.py` | presets, validation (same rules as the host), reading the crontab, the save request |
+| History import | `tests/shell/test_backfill.py` | parsing the old text log |
+| Login | `tests/portal/test_auth.py` | host-account passwords, allowed group, locked/expired accounts, rate limiting, sessions |
+| Config | `tests/portal/test_config_store.py` | reading/writing config.yaml (comments kept), validation, blocked rsync options |
+| API | `tests/portal/test_api.py` | access control and CSRF on every endpoint, status, actions, browsing, history, filesystems, folder sizes, removal requests |
+| Pages | `tests/js/run.js` | the four pages in a simulated browser: buttons, the folder picker, save / conflict / warnings, removal confirmation |
+
+The portal image pins Python 3.12: password checking uses the `crypt` module, which was removed in Python 3.13.
