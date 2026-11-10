@@ -12,7 +12,7 @@ import os
 import uuid
 
 from . import auth, cleanup, config_store, filesystems, folders, schedule, status
-from .settings import BROWSE_ROOTS, STATE_DIR, hostpath
+from .settings import BROWSE_ROOTS, STATE_DIR, host_now, host_timezone, hostpath
 
 bp = Blueprint("portal", __name__)
 UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
@@ -377,7 +377,8 @@ def _schedule_view():
     view = {"enabled": bool(m and m["enabled"]), "expr": m["expr"] if m else None,
             "managed": m is not None, "unmanaged": cron["unmanaged"], "broken": cron["broken"],
             "pending": "schedule" in status.pending_actions(), "last_status": _schedule_status(),
-            "timezone": time.strftime("%Z"), "server_time": time.time()}
+            "timezone": host_now().strftime("%Z"), "timezone_name": host_timezone(),
+            "server_time": time.time()}
     if m and not schedule.validate(m["expr"]):
         view["form"] = schedule.describe(m["expr"])
         view["next_runs"] = schedule.next_runs(m["expr"]) if m["enabled"] else []

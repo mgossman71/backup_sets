@@ -24,3 +24,36 @@ def hostpath(path):
     if not path or not path.startswith("/"):
         raise ValueError(f"not an absolute path: {path!r}")
     return HOST_ROOT + os.path.normpath(path)
+
+
+def host_timezone():
+    """The host's IANA time zone (e.g. "America/Chicago"), which is what cron schedules use.
+
+    Read from the /etc/localtime symlink (what timedatectl sets), then /etc/timezone,
+    then the TZ variable; falls back to UTC.
+    """
+    try:
+        target = os.readlink(hostpath("/etc/localtime"))
+        if "zoneinfo/" in target:
+            return target.split("zoneinfo/", 1)[1]
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(hostpath("/etc/timezone")) as f:
+            name = f.read().strip()
+            if name:
+                return name
+    except (OSError, ValueError):
+        pass
+    return os.environ.get("TZ") or "UTC"
+
+
+def host_now():
+    """Current time as an aware datetime in the host's time zone."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    try:
+        return datetime.now(ZoneInfo(host_timezone()))
+    except (ZoneInfoNotFoundError, ValueError):
+        return datetime.now().astimezone()
+

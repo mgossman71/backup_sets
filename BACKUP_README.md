@@ -497,7 +497,8 @@ Every removal is logged as a `Portal action:` line in the backup log.
 ### Scheduling
 The **Schedule** card on the portal's **Backup selections** page sets when backups run automatically:
 every day at a time, on selected days, every few hours, or a custom cron expression. It also has an
-**Automatic backups** on/off switch. Times are server time (UTC); the preview also shows your browser's
+**Automatic backups** on/off switch. Times are in the server's time zone (set to America/Chicago with
+`timedatectl set-timezone`; cron follows it, including daylight saving). The preview also shows your browser's
 local time. One schedule runs every backup set, in order. A run that starts while another is still
 going is skipped.
 

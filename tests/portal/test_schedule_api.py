@@ -182,3 +182,57 @@ def test_save_requires_login_and_csrf(client, authed):
 def test_last_status_from_host(authed):
     (STATE / "schedule_status.json").write_text(json.dumps({"status": "failed", "message": "crontab rejected", "id": "x"}))
     assert authed.get("/api/schedule").get_json()["last_status"]["message"] == "crontab rejected"
+
+
+# --------------------------------------------------------------------------- time zone
+from zoneinfo import ZoneInfo  # noqa: E402
+
+from app import settings  # noqa: E402
+from conftest import HOST  # noqa: E402
+
+CHICAGO = ZoneInfo("America/Chicago")
+
+
+def set_host_zone(link=None, etc_timezone=None):
+    lt, tz = HOST / "etc/localtime", HOST / "etc/timezone"
+    for p in (lt, tz):
+        if p.is_symlink() or p.exists():
+            p.unlink()
+    if link:
+        lt.symlink_to(f"/usr/share/zoneinfo/{link}")
+    if etc_timezone:
+        tz.write_text(etc_timezone + "\n")
+
+
+def test_host_timezone_from_localtime_link_wins_over_stale_etc_timezone(host):
+    """Exactly this server: timedatectl updated /etc/localtime but /etc/timezone still said UTC."""
+    set_host_zone(link="America/Chicago", etc_timezone="Etc/UTC")
+    assert settings.host_timezone() == "America/Chicago"
+
+
+def test_host_timezone_fallbacks(host, monkeypatch):
+    set_host_zone(etc_timezone="America/Denver")
+    assert settings.host_timezone() == "America/Denver"
+    set_host_zone()
+    monkeypatch.delenv("TZ", raising=False)
+    assert settings.host_timezone() == "UTC"
+
+
+@pytest.mark.parametrize("start,utc_hour", [
+    (datetime(2026, 11, 9, 18, 0, tzinfo=CHICAGO), 8),   # CST, UTC-6
+    (datetime(2027, 7, 1, 18, 0, tzinfo=CHICAGO), 7),    # CDT, UTC-5: still 2:00 AM local
+])
+def test_next_runs_follow_local_time_across_daylight_saving(start, utc_hour):
+    (t,) = schedule.next_runs("0 2 * * *", 1, now=start)
+    assert datetime.fromtimestamp(t, CHICAGO).strftime("%H:%M") == "02:00"
+    assert datetime.fromtimestamp(t, timezone.utc).hour == utc_hour
+
+
+def test_api_reports_server_zone_and_local_next_runs(authed):
+    set_host_zone(link="America/Chicago", etc_timezone="Etc/UTC")
+    set_crontab(block("0 2 * * *"))
+    s = authed.get("/api/schedule").get_json()
+    assert s["timezone_name"] == "America/Chicago" and s["timezone"] in ("CST", "CDT")
+    assert all(datetime.fromtimestamp(t, CHICAGO).strftime("%H:%M") == "02:00" for t in s["next_runs"])
+    (d,) = authed.get("/api/status").get_json()["schedules"]
+    assert datetime.fromtimestamp(d["next"], CHICAGO).strftime("%H:%M") == "02:00"

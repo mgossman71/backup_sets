@@ -11,7 +11,7 @@ services:
       ALLOWED_GROUP: sudo          # members of this host group may sign in
       ALLOWED_USERS: root          # plus these users (comma-separated)
       BROWSE_ROOTS: /mnt           # folder browser is limited to these trees
-      TZ: Etc/UTC
+      TZ: America/Chicago          # display only; schedules follow the host's /etc/localtime
     volumes:
       # Host filesystem, read-only: df, mount table, flag files, log, account files
       - type: bind

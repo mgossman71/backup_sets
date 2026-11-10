@@ -647,6 +647,22 @@ test("schedule: an existing managed schedule opens filled in, and Save stays off
   assert.equal(p.$("#sch-save").disabled, true, "nothing changed yet");
 });
 
+test("schedule: next runs are shown in the server's time zone, not UTC", async () => {
+  // Regression: the card always labelled and formatted "server time" as UTC.
+  const api = JSON.parse(JSON.stringify(API));
+  Object.assign(api["/api/schedule"], { timezone: "CST", timezone_name: "America/Chicago" });
+  const t = Date.UTC(2026, 10, 10, 8, 0) / 1000;   // 08:00 UTC = 02:00 CST
+  const pv = { expr: "0 2 * * *", form: { kind: "daily", time: "02:00", text: "Daily at 02:00" }, next_runs: [t, t + 86400, t + 2 * 86400] };
+  const p = await loadPage("selections", { api, respond: scheduleResponder({ previewBody: pv }) });
+  p.$("#sch-enabled").checked = true; p.fire(p.$("#sch-enabled"), "change");
+  await sleep(400);
+  const txt = p.text("#sch-preview");
+  assert.match(txt, /server time \(CST\)/);
+  assert.match(txt, /Nov 10, 0?2:00/, txt);
+  assert.doesNotMatch(txt, /08:00 AM \(/, "not formatted as UTC");
+  assert.match(p.text("#sch-tz"), /server time \(CST\)/);
+});
+
 /* ------------------------------------------------------------------ runner */
 (async () => {
   let failed = 0;

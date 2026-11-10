@@ -8,7 +8,7 @@ from datetime import datetime
 
 from croniter import croniter
 
-from .settings import BROWSE_ROOTS, CRONTAB_FILE, REQUEST_DIR, STATE_DIR, hostpath
+from .settings import BROWSE_ROOTS, CRONTAB_FILE, REQUEST_DIR, STATE_DIR, host_now, hostpath
 
 ACTIONS = {"run", "stop_on", "stop_off", "clear_fail"}
 REMOVE_RE = re.compile(r"^remove-([0-9a-f]{32})$")
@@ -57,7 +57,7 @@ def schedules():
         else:
             continue
         try:
-            nxt = croniter(expr, datetime.now().astimezone()).get_next(datetime)
+            nxt = croniter(expr, host_now()).get_next(datetime)
             out.append({"expr": expr, "command": cmd, "next": nxt.timestamp()})
         except (ValueError, KeyError):
             out.append({"expr": expr, "command": cmd, "next": None})

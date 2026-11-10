@@ -9,7 +9,7 @@ from datetime import datetime
 
 from croniter import croniter
 
-from .settings import CRONTAB_FILE, hostpath
+from .settings import CRONTAB_FILE, host_now, hostpath
 
 BEGIN = "# BEGIN backup_sets schedule (managed by the backup portal - change it there)"
 END = "# END backup_sets schedule"
@@ -120,7 +120,7 @@ def describe(expr):
 
 
 def next_runs(expr, n=5, now=None):
-    it = croniter(expr, now or datetime.now().astimezone())
+    it = croniter(expr, now or host_now())
     return [it.get_next(datetime).timestamp() for _ in range(n)]
 
 

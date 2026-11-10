@@ -47,7 +47,13 @@
 
   const localTime = (t) => new Date(t * 1000).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
   const serverTime = (t) => new Date(t * 1000).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short",
-    hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+    hour: "2-digit", minute: "2-digit", timeZone: serverZone() });
+  // the server's IANA zone (cron runs in it); fall back to the browser's zone if the browser doesn't know it
+  function serverZone() {
+    const z = current && current.timezone_name;
+    try { if (z) { new Intl.DateTimeFormat(undefined, { timeZone: z }); return z; } } catch (e) { /* unknown zone */ }
+    return undefined;
+  }
 
   function renderNotes() {
     const box = clear($("#sch-notes"));
@@ -64,7 +70,7 @@
         "Saving here comments out these lines so backups don't run twice:",
         el("ul", {}, current.unmanaged.map((l) => el("li", { class: "mono", text: l })))));
     }
-    $("#sch-tz").textContent = "server time (" + (current.timezone || "UTC") + ")";
+    $("#sch-tz").textContent = "server time (" + (current.timezone || "?") + ")";
   }
 
   async function load() {
@@ -96,7 +102,7 @@
     }
     lastExpr = r.expr;
     if (v.enabled) {
-      box.append(el("div", {}, el("b", { text: r.form.text }), " server time ",
+      box.append(el("div", {}, el("b", { text: r.form.text }), " server time" + (current && current.timezone ? " (" + current.timezone + ") " : " "),
         el("span", { class: "mono muted", text: "(" + r.expr + ")" })),
         el("div", { class: "next", text: "Next runs: " + r.next_runs.slice(0, 3).map((t) => serverTime(t) + " (" + localTime(t) + " your time)").join(" · ") }));
     } else {
