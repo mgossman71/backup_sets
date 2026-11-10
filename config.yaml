@@ -30,15 +30,44 @@ required_mount_points:
 # Backup mappings
 # Each entry maps a source directory to a destination directory
 # The folder name from the source will be created in the destination
-backups:    
+backups:
   - source: /mnt/SharedVol/Movies
     destination: /mnt/usb_chassis/pool
+    exclude:
+      - A.Hidden.Life.2019
+      - Bridesmaids
+      - Chaos.Walking.2021.1080p.WEB.h264-DELIRIUM.cp(tt2076822)
+      - Eternals (2021)
+      - Godzilla.1998.720p.Bluray.x264-HDClassics hdc-godzilla-720.cp(tt0120685)
+      - Jungle.Cruise.2021.1080p.Disney.WebDL.H264.AC3.Will1869.cp(tt0870154)
+      - Killers of the Flower Moon (2023)
+      - Léon The Professional (1994)
+      - Million.Dollar.Baby.2004.720p.BluRay.DD5.1.x264-RightSiZE.cp(tt00405159)
+      - The.Conjuring.The.Devil.Made.Me.Do.It.2021.720p.WEB.H264-NAISU.cp(tt7069210)
 
   - source: /mnt/SharedVol/Data
     destination: /mnt/usb_chassis/singleusb
 
   - source: /mnt/SharedVol/TV-Shows
     destination: /mnt/usb_chassis/singleusb
+    exclude:
+      - Alex vs ARod
+      - Gossip Girl
+      - Heartland (2007) (CA)
+      - images
+      - Lioness
+      - SouthLAnd
+      - template
+      - The Beauty
+      - The Bold and the Beautiful
+      - The Dinosaurs
+      - The Five-Star Weekend
+      - The Flight Attendant
+      - The Following
+      - Under the Dome
+      - Unfamiliar
+      - Why Women Kill
+      - Your Friends & Neighbors
 
 # To add new backups from different sources, add more entries:
 #  - source: /mnt/OtherVol/Photos
