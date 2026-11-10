@@ -1,62 +1,42 @@
 # Backup Sets Script - Usage Guide
 
 ## Overview
-This script performs incremental backups of multiple dataset folders to different USB-connected disks using rsync. It supports concurrent backups with bandwidth control and comprehensive logging. All configuration is managed through a YAML file for easy editing.
+This script performs incremental backups of multiple dataset folders to USB-connected disks using rsync.
+Backup sets run **one at a time, in the order listed** in the config. It supports bandwidth limits (through
+rsync options) and detailed logging. All configuration is in one YAML file, which can also be edited from
+the web portal (see **Web Portal** below).
 
 ## Installation
 
-### 1. Install yq (YAML parser)
-
-The script supports both common versions of yq:
-
-**Option 1: Python-based yq (kislyuk/yq)**
+### 1. Install the tools
+The script needs `rsync`, `jq`, and the **Python-based yq** ([kislyuk/yq](https://github.com/kislyuk/yq)),
+which is what Ubuntu's `yq` package provides:
 ```bash
-pip install yq
-# or
-sudo apt install yq
+sudo apt install rsync jq yq
+yq --version          # Ubuntu 24.04: "yq 0.0.0" from package yq 3.1.0 - that's the right one
 ```
+The Go-based yq (mikefarah/yq, e.g. from snap) uses a different syntax and is **not supported**.
+If it's installed first on your PATH, the script can't read its config.
 
-**Option 2: Go-based yq (mikefarah/yq)**
+### 2. Get the script
+The script, its config and the portal live together in `/opt/backup_sets`:
 ```bash
-# Using snap
-sudo snap install yq
-
-# Or direct download
-sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-sudo chmod +x /usr/local/bin/yq
-```
-
-The script will automatically detect which version you have and use the appropriate syntax.
-
-### 2. Install the script and configuration
-```bash
-# Create installation directory (or use your preferred location)
-sudo mkdir -p /usr/local/bin/backup_scripts
-
-# Copy both files to the same directory
-sudo cp backup.sh /usr/local/bin/backup_scripts/
-sudo cp config.yaml /usr/local/bin/backup_scripts/
-
-# Make script executable
-sudo chmod +x /usr/local/bin/backup_scripts/backup.sh
-
-# Optional: Create a symlink for easier access
-sudo ln -s /usr/local/bin/backup_scripts/backup.sh /usr/local/bin/backup.sh
+sudo git clone git@github.com:mgossman71/backup_sets.git /opt/backup_sets
+sudo chmod +x /opt/backup_sets/backup.sh
 ```
 
 ### 3. Create the log file
 ```bash
 sudo touch /var/log/backup_sets.log
-sudo chown gozz:gozz /var/log/backup_sets.log
 ```
 
 ## Configuration
 
-The configuration file `config.yaml` must be in the same directory as `backup.sh`. Edit this file to change backup behavior:
+The configuration file `config.yaml` must be in the same directory as `backup.sh`
+(override with the `BACKUP_CONFIG` environment variable). Edit it in the portal, or directly:
 
 ```bash
-# If installed to /usr/local/bin/backup_scripts/
-sudo nano /usr/local/bin/backup_scripts/config.yaml
+sudo nano /opt/backup_sets/config.yaml
 ```
 
 ### Configuration Options
@@ -74,9 +54,12 @@ rsync_opts: "-av --stats"
 ```
 - `-a`: Archive mode (preserves permissions, timestamps)
 - `-v`: Verbose output
-- `--stats`: Show transfer statistics
-- Add `--progress` for detailed progress
+- `--stats`: Show transfer statistics (needed for the portal's history metrics)
 - Add `--bwlimit=10000` to limit bandwidth to 10MB/s
+- Avoid `--progress` for scheduled runs: it writes a progress line many times per file and makes the log huge.
+  Use it only for manual runs in a terminal.
+- Options are split on spaces exactly as written: no quoting, and no wildcard expansion by the shell, so
+  `--exclude=*.tmp` reaches rsync as typed. Option values containing spaces aren't supported.
 
 #### running_flag / fail_flag / stop_flag
 Paths to the flag files used to control and monitor the script. Customize these when running multiple instances simultaneously — each instance must use a unique set of flag file paths.
@@ -110,12 +93,9 @@ The script will create a folder with the same name as the source folder inside t
 
 ### Manual Execution
 ```bash
-# If you created the symlink:
-sudo backup.sh
-
-# Or run directly from installation directory:
-sudo /usr/local/bin/backup_scripts/backup.sh
+sudo /opt/backup_sets/backup.sh
 ```
+Or click **Run backup now** on the portal's dashboard.
 
 You'll see real-time progress in the terminal and it will also be logged.
 
@@ -153,11 +133,6 @@ Add this line (with proper output redirection for cron):
 0 2 * * * /opt/backup_sets/backup.sh >> /var/log/backup_sets_cron.log 2>&1
 ```
 
-Or if you created the symlink:
-```
-0 2 * * * /usr/local/bin/backup.sh >> /var/log/backup_sets_cron.log 2>&1
-```
-
 Run every Sunday at 3 AM:
 ```
 0 3 * * 0 /opt/backup_sets/backup.sh >> /var/log/backup_sets_cron.log 2>&1
@@ -171,16 +146,20 @@ Flag file paths are set in `config.yaml` (`running_flag`, `fail_flag`, `stop_fla
 
 ### Check if Backup is Running
 ```bash
-ls -la /mnt/.backup_running
+cat /mnt/.backup_running                       # prints the PID of the run holding the flag
+ps -p "$(cat /mnt/.backup_running)" -o pid,cmd   # is that backup.sh still alive?
 ```
-- If file exists: backup is currently running
-- If file doesn't exist: no backup running
+- File exists and its PID is a running `backup.sh`: a backup is running
+- File exists but that process is gone: a stale flag from a crashed run. The next run removes it
+  automatically (the portal's dashboard says so too); you don't need to delete it by hand.
+- File doesn't exist: no backup running
 
 ### Prevent Backup from Starting
 ```bash
 sudo touch /mnt/.backup_stop
 ```
-This prevents the script from running (useful during maintenance).
+This prevents the script from running (useful during maintenance). If a run is already going, the
+backup set in progress finishes and the remaining sets are skipped.
 
 To allow backups again:
 ```bash
@@ -228,8 +207,7 @@ sudo grep "$(date '+%Y-%m-%d')" /var/log/backup_sets.log
 When you create new datasets or want to backup additional locations, simply edit the YAML config file in the same directory as the script:
 
 ```bash
-# Edit the config file (adjust path to your installation location)
-sudo nano /usr/local/bin/backup_scripts/config.yaml
+sudo nano /opt/backup_sets/config.yaml
 ```
 
 Add new entries to the `backups` section:
@@ -266,15 +244,20 @@ rsync_opts: "-av --stats --bwlimit=10000"
 This limits to 10MB/s (10000 KB/s)
 
 ### Show Progress During Manual Runs
-```yaml
-rsync_opts: "-av --stats --progress"
+Don't add `--progress` to `config.yaml` (it bloats the log on every scheduled run). For a one-off run in a
+terminal, use a temporary copy of the config instead:
+```bash
+sed 's/^rsync_opts: .*/rsync_opts: "-av --stats --progress"/' /opt/backup_sets/config.yaml > /tmp/config-progress.yaml
+sudo BACKUP_CONFIG=/tmp/config-progress.yaml /opt/backup_sets/backup.sh
 ```
 
 ## Troubleshooting
 
 ### Script won't start
 1. Check if yq is installed: `yq --version`
-2. Check if already running: `ls /mnt/.backup_running`
+2. Check if already running: `cat /mnt/.backup_running` gives a PID; `ps -p <PID>`. If that process is gone the
+   flag is stale and the next run clears it. A flag with no PID in it is respected; remove it by hand if
+   you're sure nothing is running.
 3. Check if stopped: `ls /mnt/.backup_stop`
 4. Check for previous failure: `ls /mnt/.backup_failed`
 5. Check logs: `sudo tail -100 /var/log/backup_sets.log`
@@ -283,25 +266,15 @@ rsync_opts: "-av --stats --progress"
 
 ### Configuration errors
 ```bash
-# Navigate to your installation directory
-cd /usr/local/bin/backup_scripts
+cd /opt/backup_sets
 
 # Validate YAML syntax
-# For Python yq:
 yq '.' config.yaml
 
-# For Go yq:
-yq eval '.' config.yaml
-
-# Check specific values (Python yq syntax):
+# Check specific values
 yq -r '.running_flag' config.yaml
 yq -r '.backups | length' config.yaml
 yq -r '.backups[0].source' config.yaml
-
-# Check specific values (Go yq syntax):
-yq eval '.running_flag' config.yaml
-yq eval '.backups | length' config.yaml
-yq eval '.backups[0].source' config.yaml
 ```
 
 ### Backup failed
@@ -324,7 +297,7 @@ yq eval '.backups[0].source' config.yaml
 [2025-02-28 02:00:01] ==========================================
 [2025-02-28 02:00:01] Backup script started
 [2025-02-28 02:00:01] ==========================================
-[2025-02-28 02:00:01] Loaded configuration from: /usr/local/bin/backup_scripts/config.yaml
+[2025-02-28 02:00:01] Loaded configuration from: /opt/backup_sets/config.yaml
 [2025-02-28 02:00:01] LOG_FILE: /var/log/backup_sets.log
 [2025-02-28 02:00:01] RSYNC_OPTS: -av --stats
 [2025-02-28 02:00:01] RUNNING_FLAG: /mnt/.backup_running
@@ -384,12 +357,18 @@ backups:
 
 ## Safety Features
 
-1. **Single instance**: Script won't run if already running (per flag file)
-2. **Stop control**: Touch the `stop_flag` path to prevent execution
-3. **Failure detection**: Creates `fail_flag` on errors
+1. **Single instance**: Only one run at a time. The running flag is created atomically and contains the
+   run's process ID. If a run crashed (power loss, `kill -9`), the next run sees that the process is gone,
+   logs "Removing stale running flag", and carries on, so a leftover flag can't block backups forever.
+   A flag without a process ID (made by hand or by an older version) is respected as "running".
+2. **Stop control**: Touch the `stop_flag` path (or click **Pause** in the portal) to prevent runs. If you
+   pause during a run, the backup set in progress finishes, the remaining sets are skipped, and the run
+   is recorded as "Paused mid-run".
+3. **Failure detection**: Creates `fail_flag` on errors (a warning is logged if it can't be created)
 4. **Comprehensive logging**: All actions logged with timestamps
-5. **Automatic cleanup**: Removes running flag on exit/error
-6. **Error propagation**: If any backup fails, all stop and flag is set
+5. **Automatic cleanup**: Removes the running flag on exit/error, but only the flag this run created
+6. **Error propagation**: If any backup set fails, the run stops there (later sets are not attempted)
+   and the fail flag is set
 7. **Configuration validation**: Checks for required settings and valid YAML
 8. **Dependency check**: Verifies yq is installed before running
 
@@ -428,13 +407,15 @@ Repeated failures from one IP are rate-limited (5 per 5 minutes).
 
 ### Pages
 - **Dashboard**: status (healthy / running / failed / paused), next scheduled run, Run now / Pause / Resume /
-  Clear failed buttons, the last run's per-job results, backup filesystem fullness, and a live log tail.
+  Clear failed buttons, the last run's per-job results, backup filesystem fullness, and a live log tail. A
+  running flag left by a crashed run is shown as such, not as "running".
 - **Backup selections**: add, edit, reorder, or remove source → destination pairs, with a folder browser
   (limited to `/mnt`). You can also edit required mount points and rsync options. Saves are validated (paths exist,
-  no two sources writing to the same folder, no remote-shell rsync options). Each save keeps a copy of the
+  no two sources writing to the same folder, no remote-shell or source-deleting rsync options, no quotes or
+  backslashes in rsync options). Each save keeps a copy of the
   previous file in `config_backups/`.
-- **History**: every run with per-job rsync stats. Charts show data copied per day, run outcomes, run duration,
-  and source size growth.
+- **History**: every run with per-job rsync stats and its outcome (success, failed, skipped, paused mid-run,
+  incomplete). Charts show data copied per day, run outcomes, run duration, and source size growth.
 - **Filesystems**: every real filesystem with size, used, and free space, warnings at 85% and 95%, growth rate, and a
   projected "full in" time. The portal records a usage snapshot every hour for the trend chart.
 
@@ -555,7 +536,7 @@ if anything fails.
 
 | Area | File | What it covers |
 |---|---|---|
-| backup.sh | `tests/shell/test_backup.py` | copying, history records, stop / running / fail flags, mount checks, failures, concurrent starts, interrupts, include/exclude selection (odd names, wildcards, nested folders) |
+| backup.sh | `tests/shell/test_backup.py` | copying, history records, stop / running / fail flags (incl. stale flags and pausing mid-run), mount checks, failures, simultaneous starts, interrupts, rsync options passed exactly as written, include/exclude selection (odd names, wildcards, nested folders) |
 | Action bridge | `tests/shell/test_actions.py` | run / pause / resume / clear requests, and every safety rule for removing folders from a backup disk |
 | Cleanup (host) | `tests/shell/test_cleanup.py` | every safety rule of Backup Folder Cleanup |
 | Cleanup (portal) | `tests/portal/test_cleanup_api.py` | the comparison, protected folders, confirmation and refusals |

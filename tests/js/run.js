@@ -120,6 +120,15 @@ test("dashboard: failed state shows reason and Clear button", async () => {
   assert.equal(p.$("#btn-clear").hidden, false);
 });
 
+test("dashboard: a stale running flag is explained, not shown as running", async () => {
+  const api = JSON.parse(JSON.stringify(API));
+  api["/api/status"].flags.stale_running = { path: "/mnt/.backup_running", pid: "4321", since: Date.now() / 1000 - 9000 };
+  const p = await loadPage("dashboard", { api });
+  assert.match(p.text("#status-flags"), /didn't finish cleanly \(pid 4321\)/);
+  assert.doesNotMatch(p.text("#status-main"), /running/i);
+  assert.equal(p.$("#btn-run").disabled, false);
+});
+
 test("dashboard: missing cron entry is called out", async () => {
   const api = JSON.parse(JSON.stringify(API));
   api["/api/status"].schedules = [];

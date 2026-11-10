@@ -465,7 +465,7 @@ def api_hist_runs():
     per = min(max(request.args.get("per_page", 50, type=int), 10), 500)
     page = max(request.args.get("page", 1, type=int), 1)
     st = request.args.get("status") or None
-    if st not in (None, "success", "failed", "skipped", "incomplete", "running"):
+    if st not in (None, "success", "failed", "skipped", "stopped", "incomplete", "running"):
         abort(400)
     total, runs = history().runs(days=_days(), status=st,
                                  only_changes=request.args.get("only_changes") == "1",

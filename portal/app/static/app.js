@@ -106,6 +106,7 @@ const STATUS = {
   success: { cls: "good", label: "Success" },
   failed: { cls: "critical", label: "Failed" },
   skipped: { cls: "", label: "Skipped" },
+  stopped: { cls: "warning", label: "Paused mid-run" },
   incomplete: { cls: "serious", label: "Incomplete" },
   running: { cls: "running", label: "Running" },
 };

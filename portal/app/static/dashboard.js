@@ -33,6 +33,11 @@
     if (!s.schedules.length) flags.append(el("span", { class: "pill warning", text: "Automatic backups are off: no schedule is set" }));
     flags.append(el("a", { class: "small", href: "/selections#schedule", text: s.schedules.length ? "Change schedule" : "Set a schedule" }));
 
+    if (f.stale_running) {
+      flags.append(el("span", { class: "pill warning",
+        text: "A previous run didn't finish cleanly (pid " + (f.stale_running.pid || "?") + "). The next backup clears its leftover running flag." }));
+    }
+
     const act = clear($("#activity"));
     if (f.running && s.activity) {
       const a = s.activity;

@@ -44,6 +44,17 @@ log() {
 
 valid_path() { [ -n "$1" ] && [ "$1" != "null" ]; }
 
+# A backup is running only if the running flag's PID is a live backup.sh process.
+# A stale flag (crashed run) must not block Run now or removals. Same rule as backup.sh;
+# a flag without a PID is treated as running, to be safe.
+backup_running() {
+    valid_path "$RUNNING_FLAG" && [ -e "$RUNNING_FLAG" ] || return 1
+    local pid
+    pid=$(head -c 32 "$RUNNING_FLAG" 2>/dev/null | tr -dc '0-9')
+    [ -z "$pid" ] && return 0
+    grep -qa "backup.sh" "/proc/$pid/cmdline" 2>/dev/null
+}
+
 # Write the status file the portal polls. Args: id status message [extra json fields]
 removal_status() {
     local id="$1" st="$2" msg="$3"
@@ -75,7 +86,7 @@ handle_remove() {
         || [[ "$R_FOLDER" == */* ]] || [[ "$R_FOLDER" == *$'\n'* ]]; then
         refuse "invalid folder name"; return
     fi
-    if valid_path "$RUNNING_FLAG" && [ -f "$RUNNING_FLAG" ]; then
+    if backup_running; then
         refuse "a backup is running - try again when it finishes"; return
     fi
 
@@ -152,7 +163,7 @@ for req in "$REQUEST_DIR"/*; do
 
     case "$action" in
         run)
-            if valid_path "$RUNNING_FLAG" && [ -f "$RUNNING_FLAG" ]; then
+            if backup_running; then
                 log "run requested by $user ignored - backup already running"
                 continue
             fi

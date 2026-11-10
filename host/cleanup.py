@@ -33,6 +33,25 @@ def now_str():
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def backup_running(flag):
+    """True if the running flag belongs to a live backup.sh process (same rule as backup.sh).
+    A stale flag left by a crashed run does not count; a flag without a PID does."""
+    if not flag or not os.path.lexists(flag):
+        return False
+    try:
+        with open(flag) as f:
+            pid = "".join(c for c in f.read(32) if c.isdigit())
+    except OSError:
+        return True
+    if not pid:
+        return True
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return b"backup.sh" in f.read()
+    except OSError:
+        return False
+
+
 class Run:
     def __init__(self, plan_path, status_path, config_path, log_file, user):
         self.plan_path, self.status_path = plan_path, status_path
@@ -82,8 +101,7 @@ class Run:
                 cfg = yaml.safe_load(f) or {}
         except (OSError, yaml.YAMLError) as e:
             return self.fail(f"cannot read config.yaml: {e}")
-        running = cfg.get("running_flag")
-        if running and os.path.exists(running):
+        if backup_running(cfg.get("running_flag")):
             return self.fail("a backup is running - try again when it finishes")
 
         source, destination = p.get("source"), p.get("destination")

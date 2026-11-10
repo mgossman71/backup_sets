@@ -293,3 +293,26 @@ def test_unsaved_deselection_is_not_enough(br):
                                                     "mode": "exclude", "exclude": ["Keep"]}))
     br.process()
     _refused(br, rid, "still selected")
+
+
+# --------------------------------------------------------------------------- stale running flag
+def _dead_pid():
+    import subprocess as sp
+    p = sp.Popen(["true"])
+    p.wait()
+    return p.pid
+
+
+def test_run_starts_despite_stale_running_flag(br):
+    br.running_flag.write_text(f"{_dead_pid()}\n")
+    br.request("run")
+    br.process()
+    assert br.last_run()["status"] == "success"
+    assert "Removing stale running flag" in br.log_text()
+
+
+def test_removal_allowed_despite_stale_running_flag(br):
+    br.running_flag.write_text(f"{_dead_pid()}\n")
+    rid = br.remove_request("Drop")
+    br.process()
+    assert br.status(rid)["status"] == "done"

@@ -253,3 +253,13 @@ def test_user_is_sanitised(cb):
     cb.process()
     assert cb.result(pid)["user"] == "unknown"
     assert not os.path.exists("/tmp/pwned")
+
+
+def test_cleanup_allowed_despite_stale_running_flag(cb):
+    import subprocess as sp
+    p = sp.Popen(["true"])
+    p.wait()
+    cb.running_flag.write_text(f"{p.pid}\n")
+    pid = cb.plan(["GoneShow"])
+    cb.process()
+    assert cb.result(pid)["status"] == "done"

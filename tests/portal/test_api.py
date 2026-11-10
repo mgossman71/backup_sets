@@ -99,7 +99,7 @@ def test_healthz_is_public(client):
 # --------------------------------------------------------------------------- status & log
 def test_status_reflects_flag_files(authed):
     s = authed.get("/api/status").get_json()
-    assert s["flags"] == {"running": None, "failed": None, "stopped": None}
+    assert s["flags"] == {"running": None, "stale_running": None, "failed": None, "stopped": None}
     for f in ("running", "failed", "stop"):
         host_path(f"/mnt/.backup_{f}").write_text("")
     s = authed.get("/api/status").get_json()
@@ -459,3 +459,25 @@ def test_removal_status_from_host(authed):
     assert [x["status"] for x in r] == ["done", "failed"]
     f = authed.get(f"/api/folders?source={TV}&destination={DISK}").get_json()
     assert len(f["removals"]) == 2
+
+
+# --------------------------------------------------------------------------- stale running flag
+def test_stale_running_flag_is_not_reported_as_running(authed):
+    host_path("/mnt/.backup_running").write_text("99999999\n")  # no such process on the fake host
+    s = authed.get("/api/status").get_json()
+    assert s["flags"]["running"] is None
+    assert s["flags"]["stale_running"]["pid"] == "99999999"
+    assert authed.post("/api/action/run", headers=authed.H).status_code == 200
+
+
+def test_running_flag_of_live_backup_is_running(authed):
+    (HOST / "proc/4242").mkdir(parents=True)
+    (HOST / "proc/4242/cmdline").write_bytes(b"bash\0/opt/backup_sets/backup.sh\0")
+    host_path("/mnt/.backup_running").write_text("4242\n")
+    s = authed.get("/api/status").get_json()
+    assert s["flags"]["running"] and s["flags"]["stale_running"] is None
+    assert authed.post("/api/action/run", headers=authed.H).status_code == 409
+
+
+def test_history_status_filter_accepts_stopped(authed):
+    assert authed.get("/api/history/runs?status=stopped").status_code == 200

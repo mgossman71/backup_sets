@@ -179,6 +179,11 @@ def validate(backups, mount_points, rsync_opts):
                 warnings.append(f"{n}: {len(missing)} selected folder(s) no longer exist in {src}: "
                                 f"{', '.join(missing[:5])}{'…' if len(missing) > 5 else ''}")
 
+    # backup.sh splits the options on spaces only (no quote handling), so quotes and
+    # backslashes would reach rsync literally: refuse them, so what you type is what runs
+    if any(c in rsync_opts for c in "'\"\\"):
+        errors.append("rsync options can't contain quotes or backslashes (option values with spaces "
+                      "aren't supported)")
     try:
         tokens = shlex.split(rsync_opts)
     except ValueError as e:

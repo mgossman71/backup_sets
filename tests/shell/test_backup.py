@@ -389,3 +389,109 @@ def test_invalid_folder_names_are_rejected(bk, bad):
     assert r.returncode == 1
     assert "Invalid folder name" in bk.last_run()["reason"]
     assert not (bk.dst / "TV").exists() or not os.listdir(bk.dst / "TV")
+
+
+# --------------------------------------------------------------------------- review fixes
+import subprocess  # noqa: E402
+
+
+def _dead_pid():
+    p = subprocess.Popen(["true"])
+    p.wait()
+    return p.pid  # finished, so no such process now
+
+
+def test_running_flag_contains_pid(bk):
+    _slow_source(bk)
+    p = bk.popen()
+    for _ in range(50):
+        if bk.running_flag.exists() and bk.running_flag.read_text().strip():
+            break
+        time.sleep(0.1)
+    assert bk.running_flag.read_text().strip().isdigit()
+    p.wait(60)
+
+
+def test_stale_running_flag_is_cleared_and_backup_runs(bk):
+    """Regression: a run that crashed (power loss, kill -9) left its flag behind and every
+    later backup was skipped as 'already running' forever."""
+    bk.add(make_tv(bk))
+    bk.running_flag.write_text(f"{_dead_pid()}\n")
+    r = bk.run()
+    assert r.returncode == 0, r.stdout
+    assert bk.last_run()["status"] == "success"
+    assert "Removing stale running flag" in bk.log_text()
+    assert not bk.running_flag.exists()
+
+
+def test_flag_whose_pid_is_now_another_program_is_stale(bk):
+    """PIDs get reused: a live process that isn't backup.sh doesn't hold the flag."""
+    bk.add(make_tv(bk))
+    other = subprocess.Popen(["sleep", "30"])
+    try:
+        bk.running_flag.write_text(f"{other.pid}\n")
+        assert bk.run().returncode == 0
+        assert bk.last_run()["status"] == "success"
+    finally:
+        other.kill()
+
+
+def test_flag_without_pid_is_still_respected(bk):
+    bk.add(make_tv(bk))
+    bk.running_flag.write_text("")
+    assert bk.run().returncode == 1
+    assert bk.last_run()["status"] == "skipped"
+    assert bk.running_flag.exists()
+
+
+def test_running_flag_folder_missing_is_an_error_not_already_running(bk):
+    bk.add(make_tv(bk))
+    bk.running_flag = bk.root / "no-such-dir" / ".running"
+    r = bk.run()
+    assert r.returncode == 1
+    assert "Cannot create running flag" in bk.last_run()["reason"]
+    assert not (bk.dst / "TV").exists()
+
+
+def test_fail_flag_that_cannot_be_created_is_logged(bk):
+    bk.add(bk.src / "missing")
+    bk.fail_flag = bk.root / "no-such-dir" / ".failed"
+    assert bk.run().returncode == 1
+    assert "could not create fail flag" in bk.log_text()
+
+
+def test_pause_during_run_skips_remaining_sets(bk):
+    write_tree(bk.src / "Big", {"big.bin": os.urandom(600_000)})
+    write_tree(bk.src / "Second", {"f": "2"})
+    write_tree(bk.src / "Third", {"f": "3"})
+    bk.add(bk.src / "Big")
+    bk.add(bk.src / "Second")
+    bk.add(bk.src / "Third")
+    bk.rsync_opts = "-a --stats --bwlimit=200"
+    p = bk.popen()
+    for _ in range(50):
+        if bk.running_flag.exists():
+            break
+        time.sleep(0.1)
+    bk.stop_flag.write_text("")  # paused while the first set is copying
+    p.wait(60)
+    assert p.returncode == 0
+    assert (bk.dst / "Big" / "big.bin").exists(), "the set in progress finishes"
+    assert not (bk.dst / "Second").exists() and not (bk.dst / "Third").exists()
+    run = bk.last_run()
+    assert run["status"] == "stopped" and "2 backup set(s) not run" in run["reason"]
+    assert not bk.running_flag.exists() and not bk.fail_flag.exists()
+
+
+def test_rsync_options_are_not_wildcard_expanded(bk, monkeypatch, tmp_path):
+    """Regression: unquoted $RSYNC_OPTS was glob-expanded, so '--exclude=*.tmp' could turn
+    into '--exclude=a.tmp' if a file of that name existed in the working directory."""
+    write_tree(bk.src / "Set", {"keep.txt": "k", "a.tmp": "a", "b.tmp": "b"})
+    bk.add(bk.src / "Set")
+    bk.rsync_opts = "-a --stats --exclude=*.tmp"
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / "--exclude=a.tmp").write_text("")  # bait for glob expansion
+    monkeypatch.chdir(cwd)
+    assert bk.run().returncode == 0
+    assert sorted(os.listdir(bk.dst / "Set")) == ["keep.txt"]

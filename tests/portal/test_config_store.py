@@ -212,7 +212,9 @@ def test_exclude_of_missing_folder_is_fine(host):
                                   "-a 'unclosed",
                                   # clustered / attached short options (regression: these used to pass)
                                   "-avessh", "-ave", "-avMfoo", "-essh",
-                                  "-a --remove-source-files", "-a --exclude-from=/etc/shadow"])
+                                  "-a --remove-source-files", "-a --exclude-from=/etc/shadow",
+                                  # quotes/backslashes would reach rsync literally (backup.sh doesn't parse them)
+                                  "-a --exclude='My Docs'", '-a --exclude="x y"', "-a --exclude=a\\ b"])
 def test_dangerous_rsync_options_rejected(host, opts):
     errors, _ = validate([B()], opts=opts)
     assert errors, opts

@@ -29,9 +29,34 @@ def _flag(path):
         return None
 
 
+def _running_pid_alive(path):
+    """Same rule as backup.sh: the running flag holds the PID of the run that made it.
+    Returns (active, pid). A flag without a PID is treated as active."""
+    try:
+        with open(hostpath(path)) as f:
+            pid = "".join(c for c in f.read(32) if c.isdigit())
+    except (OSError, ValueError):
+        return True, None
+    if not pid:
+        return True, None
+    try:
+        with open(hostpath(f"/proc/{pid}/cmdline"), "rb") as f:
+            return b"backup.sh" in f.read(), pid
+    except (OSError, ValueError):
+        return False, pid
+
+
 def flags(cfg):
+    running = _flag(cfg.get("running_flag"))
+    stale = None
+    if running:
+        active, pid = _running_pid_alive(cfg["running_flag"])
+        if not active:
+            # left behind by a run that crashed: the next backup removes it
+            stale, running = dict(running, pid=pid), None
     return {
-        "running": _flag(cfg.get("running_flag")),
+        "running": running,
+        "stale_running": stale,
         "failed": _flag(cfg.get("fail_flag")),
         "stopped": _flag(cfg.get("stop_flag")),
     }

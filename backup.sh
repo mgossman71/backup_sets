@@ -52,7 +52,7 @@ SELECTION_COUNT=0
 yq_read() {
     local query="$1"
     local file="$2"
-    cat "$file" | yq -r "$query" 2>/dev/null
+    yq -r "$query" "$file" 2>/dev/null
 }
 
 # Load configuration from YAML
@@ -222,7 +222,7 @@ record_run() {
 # Args: message [rsync_rc] [stats_file]
 error_exit() {
     log "ERROR: $1"
-    touch "$FAIL_FLAG"
+    touch "$FAIL_FLAG" 2>/dev/null || log "WARNING: could not create fail flag $FAIL_FLAG"
     if [ -n "$CURRENT_JOB_SOURCE" ]; then
         record_job "failed" "${2:-}" "${3:-}" "$1"
         [ -n "${3:-}" ] && rm -f "$3"
@@ -360,9 +360,30 @@ check_stop_flag() {
     fi
 }
 
+# Is the running flag held by a backup that is actually still running?
+# The flag holds the PID of the run that created it. If that process is gone (power
+# loss, kill -9) or is no longer backup.sh (PID reused), the flag is stale.
+# A flag without a PID (older versions, or created by hand) is treated as active.
+running_flag_active() {
+    [ -e "$RUNNING_FLAG" ] || return 1
+    local pid
+    pid=$(head -c 32 "$RUNNING_FLAG" 2>/dev/null | tr -dc '0-9')
+    [ -z "$pid" ] && return 0
+    grep -qa "backup.sh" "/proc/$pid/cmdline" 2>/dev/null
+}
+
+# Remove a stale running flag (logged), so a crashed run cannot block backups forever
+clear_stale_running_flag() {
+    if [ -e "$RUNNING_FLAG" ] && ! running_flag_active; then
+        log "Removing stale running flag $RUNNING_FLAG (process $(tr -dc '0-9' < "$RUNNING_FLAG") is no longer running)"
+        rm -f "$RUNNING_FLAG"
+    fi
+}
+
 # Check if script is already running
 check_running() {
-    if [ -f "$RUNNING_FLAG" ]; then
+    clear_stale_running_flag
+    if [ -e "$RUNNING_FLAG" ]; then
         log "Backup script is already running (flag exists: $RUNNING_FLAG)"
         log "If this is incorrect, remove the flag: rm $RUNNING_FLAG"
         record_run "skipped" "Already running"
@@ -370,17 +391,19 @@ check_running() {
     fi
 }
 
-# Create running flag
 # Create running flag atomically (noclobber), so two runs starting at the same
-# moment cannot both proceed.
+# moment cannot both proceed. It contains this run's PID.
 set_running_flag() {
-    if ! ( set -o noclobber; : > "$RUNNING_FLAG" ) 2>/dev/null; then
+    if ! ( set -o noclobber; echo "$$" > "$RUNNING_FLAG" ) 2>/dev/null; then
+        if [ ! -e "$RUNNING_FLAG" ]; then
+            error_exit "Cannot create running flag $RUNNING_FLAG - does its folder exist and is it writable?"
+        fi
         log "Backup script is already running (flag exists: $RUNNING_FLAG)"
         record_run "skipped" "Already running"
         exit 1
     fi
     OWN_RUNNING_FLAG=1
-    log "Created running flag: $RUNNING_FLAG"
+    log "Created running flag: $RUNNING_FLAG (pid $$)"
 }
 
 # Perform backup for a single folder
@@ -428,7 +451,10 @@ backup_folder() {
     local stats_file
     stats_file=$(mktemp /tmp/backup_sets_stats.XXXXXX)
 
-    rsync $RSYNC_OPTS --filter="merge $FILTER_FILE" "$source_path/" "$dest_path/" 2>&1 \
+    # split on whitespace only: no wildcard expansion, so "--exclude=*.tmp" reaches rsync as typed
+    local -a rsync_args
+    read -ra rsync_args <<< "$RSYNC_OPTS"
+    rsync "${rsync_args[@]}" --filter="merge $FILTER_FILE" "$source_path/" "$dest_path/" 2>&1 \
         | tee -a "$LOG_FILE" | tail -n 100 > "$stats_file"
     local rc=${PIPESTATUS[0]}
     remove_filter_file
@@ -471,6 +497,15 @@ process_backups() {
 
         if [ -z "$destination" ] || [ "$destination" = "null" ]; then
             error_exit "Invalid destination in backup entry $i"
+        fi
+
+        # Paused while this run was going? Finish the set in progress, start no new ones.
+        if [ "$i" -gt 0 ] && [ -f "$STOP_FLAG" ]; then
+            local remaining=$((backup_count - i))
+            log "Stop flag detected at $STOP_FLAG - skipping the remaining $remaining backup(s)"
+            record_run "stopped" "Paused during the run - $remaining backup set(s) not run"
+            cleanup
+            exit 0
         fi
 
         # Run backup (blocking - waits for completion)
