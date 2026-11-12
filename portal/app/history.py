@@ -153,9 +153,16 @@ class History:
         if status:
             where.append("r.status = ?")
             params.append(status)
-        having = "HAVING COALESCE(SUM(j.transferred_bytes),0) > 0 OR r.status != 'success'" if only_changes else ""
-        base = (f"FROM runs r LEFT JOIN jobs j ON j.run_id = r.run_id WHERE {' AND '.join(where)} "
-                f"GROUP BY r.run_id {having}")
+        cond = " AND ".join(where)
+        having = ""
+        if only_changes:
+            # Hide no-op successes, but always keep the newest matching run so a quiet
+            # stretch (nothing new to copy) never looks like backups stopped running.
+            having = ("HAVING COALESCE(SUM(j.transferred_bytes),0) > 0 OR r.status != 'success' "
+                      f"OR r.run_id = (SELECT r.run_id FROM runs r WHERE {cond} "
+                      "ORDER BY r.start_ts DESC LIMIT 1)")
+            params = params + params
+        base = f"FROM runs r LEFT JOIN jobs j ON j.run_id = r.run_id WHERE {cond} GROUP BY r.run_id {having}"
         with connect() as conn:
             total = conn.execute(f"SELECT COUNT(*) FROM (SELECT r.run_id {base})", params).fetchone()[0]
             rows = conn.execute(
@@ -163,6 +170,15 @@ class History:
                 f"SUM(j.transferred_files) AS transferred_files, COUNT(j.run_id) AS jobs "
                 f"{base} ORDER BY r.start_ts DESC LIMIT ? OFFSET ?", params + [limit, offset]).fetchall()
         return total, [self._run_dict(r) for r in rows]
+
+    def count_runs(self, days=30, status=None):
+        sql = "SELECT COUNT(*) FROM runs WHERE start_ts >= ?"
+        params = [time.time() - days * 86400]
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        with connect() as conn:
+            return conn.execute(sql, params).fetchone()[0]
 
     def run_detail(self, run_id):
         with connect() as conn:

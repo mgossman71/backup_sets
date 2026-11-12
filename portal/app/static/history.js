@@ -133,7 +133,8 @@
     const next = el("button", { text: "Older →", disabled: page >= pages });
     prev.addEventListener("click", () => { page--; loadRuns(); });
     next.addEventListener("click", () => { page++; loadRuns(); });
-    pager.append(prev, el("span", { class: "small ink2", text: `Page ${page} of ${pages} · ${fmtNum(d.total)} runs` }), next);
+    const hiddenNote = d.hidden ? ` · ${fmtNum(d.hidden)} run${d.hidden === 1 ? "" : "s"} with nothing to copy hidden` : "";
+    pager.append(prev, el("span", { class: "small ink2", text: `Page ${page} of ${pages} · ${fmtNum(d.total)} runs${hiddenNote}` }), next);
   }
 
   function loadAll() {

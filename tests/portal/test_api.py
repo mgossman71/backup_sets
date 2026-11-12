@@ -235,9 +235,31 @@ def test_history_runs_and_filters(authed, with_history):
     assert d["runs"][0]["status"] == "incomplete", "a job without a run record and no running flag"
     only = authed.get("/api/history/runs?days=3650&only_changes=1").get_json()
     assert {r["run_id"] for r in only["runs"]} == {"r1", "r2", "r4", "r5"}
+    assert only["hidden"] == 1
+    assert d["hidden"] == 0
     failed = authed.get("/api/history/runs?days=3650&status=failed").get_json()
     assert [r["run_id"] for r in failed["runs"]] == ["r4"]
     assert authed.get("/api/history/runs?status=bogus").status_code == 400
+
+
+def test_history_hide_no_change_runs_keeps_latest(authed, app, with_history):
+    # Several quiet nights in a row: the newest one stays visible so the page never
+    # looks like backups stopped; the older no-op ones are hidden and counted.
+    quiet = []
+    for n, day in ((6, "05"), (7, "06"), (8, "07")):
+        start, end = f"2026-11-{day}T02:00:00+00:00", f"2026-11-{day}T02:00:01+00:00"
+        quiet += [{"type": "job", "run_id": f"r{n}", "source": TV, "dest": DISK + "/TV", "start": start,
+                   "end": end, "status": "success", "rc": 0, "stats": {"transferred_bytes": 0}},
+                  {"type": "run", "run_id": f"r{n}", "start": start, "end": end, "status": "success",
+                   "trigger": "cron", "jobs_completed": 1}]
+    (STATE / "history.jsonl").write_text(fakehost.history_lines(RUNS + quiet))
+    app.extensions["history"].ingest()
+    only = authed.get("/api/history/runs?days=3650&only_changes=1").get_json()
+    assert [r["run_id"] for r in only["runs"]] == ["r8", "r5", "r4", "r2", "r1"]
+    assert only["total"] == 5 and only["hidden"] == 3
+    ok = authed.get("/api/history/runs?days=3650&only_changes=1&status=success").get_json()
+    assert [r["run_id"] for r in ok["runs"]] == ["r8", "r1"]  # r5 has no run record, so not "success"
+    assert ok["hidden"] == 3
 
 
 def test_history_in_progress_run_shows_running(authed, with_history):

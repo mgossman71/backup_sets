@@ -501,11 +501,13 @@ def api_hist_runs():
     st = request.args.get("status") or None
     if st not in (None, "success", "failed", "skipped", "stopped", "incomplete", "running"):
         abort(400)
-    total, runs = history().runs(days=_days(), status=st,
-                                 only_changes=request.args.get("only_changes") == "1",
+    only_changes = request.args.get("only_changes") == "1"
+    total, runs = history().runs(days=_days(), status=st, only_changes=only_changes,
                                  limit=per, offset=(page - 1) * per)
+    hidden = history().count_runs(days=_days(), status=st) - total if only_changes else 0
     running = status.flags(_cfg())["running"]
-    return jsonify(total=total, page=page, per_page=per, runs=[_fix_running(r, running) for r in runs])
+    return jsonify(total=total, hidden=hidden, page=page, per_page=per,
+                   runs=[_fix_running(r, running) for r in runs])
 
 
 @bp.get("/api/history/run/<run_id>")
